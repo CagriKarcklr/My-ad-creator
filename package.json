@@ -1,0 +1,9 @@
+{
+  "name": "ad-creator",
+  "version": "1.0.0",
+  "description": "App Store & Social Media Ad Screenshot Creator",
+  "scripts": {
+    "start": "npx serve . -p 3000 -s",
+    "dev": "npx serve . -p 3000 -s --cors"
+  }
+}

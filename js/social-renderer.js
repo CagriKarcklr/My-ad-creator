@@ -9,6 +9,7 @@ window.SocialRenderer = (() => {
 
   // Image cache for stock photo backgrounds
   const imageCache = new Map();
+  const patternNoiseTileCache = new Map();
 
   /**
    * Main render function for social posts
@@ -32,7 +33,23 @@ window.SocialRenderer = (() => {
     }
 
     // 3. Phone mockup (show even without screenshot — placeholder screen)
-    if (state.showPhone !== false) {
+    // In AI mode, phone is auto-positioned (centered, locked)
+    if (state.background && state.background.type === 'ai-generated') {
+      // AI mode: render phone at fixed centered position
+      const aiPhoneScale = 42; // % of canvas width
+      const pw = W * (aiPhoneScale / 100);
+      const px = W * 0.50; // centered horizontally
+      const py = H * 0.55; // slightly below center
+
+      Renderer.drawPhoneMockup(ctx, px, py, pw, pw / Renderer.PHONE_W_TO_H, state.screenshot || null, {
+        rotation: 0,
+        shadow: true,
+        shadowIntensity: 0.35,
+        shadowBlur: 60,
+        screenBrightness: state.screenBrightness || 0,
+        perspective: '',
+      });
+    } else if (state.showPhone !== false) {
       const pw = W * (state.phoneScale / 100);
       const px = W * (state.phoneX / 100);
       const py = H * (state.phoneY / 100);
@@ -47,8 +64,8 @@ window.SocialRenderer = (() => {
       });
     }
 
-    // 3b. Second phone mockup
-    if (state.showPhone2) {
+    // 3b. Second phone mockup (not in AI mode)
+    if (state.showPhone2 && !(state.background && state.background.type === 'ai-generated')) {
       const pw2 = W * (state.phone2Scale / 100);
       const px2 = W * (state.phone2X / 100);
       const py2 = H * (state.phone2Y / 100);
@@ -102,6 +119,14 @@ window.SocialRenderer = (() => {
         break;
       case 'iphone-mockup':
         drawIphoneMockupBg(ctx, W, H, bg, state);
+        break;
+      case 'ai-generated':
+        if (bg.customImage) {
+          drawCustomImageBg(ctx, W, H, bg.customImage);
+        } else {
+          ctx.fillStyle = '#E8E8E8';
+          ctx.fillRect(0, 0, W, H);
+        }
         break;
       case 'custom':
         if (bg.customImage) {
@@ -834,11 +859,101 @@ window.SocialRenderer = (() => {
     const patternId = bg.patternId;
     const pattern = BackgroundLibrary.PATTERNS.find(p => p.id === patternId);
     if (pattern) {
-      pattern.generate(ctx, W, H, bg.accent);
+      const colors = Array.isArray(bg.patternColors) && bg.patternColors.length >= 3
+        ? bg.patternColors
+        : ['#8D7EDB', '#C5B8F0', '#ECE5FF'];
+      const intensity = normalizePatternPercent(bg.patternIntensity, 72);
+      const grain = normalizePatternPercent(bg.patternGrain, 0);
+      // Keep the library API backward-compatible by passing a single accent color.
+      pattern.generate(ctx, W, H, colors[0]);
+      applyPatternColorOverlay(ctx, W, H, colors, intensity);
+      applyPatternGrain(ctx, W, H, grain);
     } else {
       ctx.fillStyle = '#E8E8E8';
       ctx.fillRect(0, 0, W, H);
     }
+  }
+
+  function applyPatternColorOverlay(ctx, W, H, colors, intensity = 72) {
+    if (!Array.isArray(colors) || colors.length < 2) return;
+
+    const alphaScale = normalizePatternPercent(intensity, 72) / 100;
+    if (alphaScale <= 0) return;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'soft-light';
+    ctx.globalAlpha = 0.72 * alphaScale;
+
+    const linear = ctx.createLinearGradient(0, 0, W, H);
+    linear.addColorStop(0, colors[0]);
+    linear.addColorStop(0.55, colors[1]);
+    linear.addColorStop(1, colors[2] || colors[1]);
+    ctx.fillStyle = linear;
+    ctx.fillRect(0, 0, W, H);
+
+    const radial = ctx.createRadialGradient(W * 0.84, H * 0.18, 0, W * 0.84, H * 0.18, Math.max(W, H) * 0.6);
+    radial.addColorStop(0, `${colors[2] || colors[1]}aa`);
+    radial.addColorStop(1, `${colors[2] || colors[1]}00`);
+    ctx.globalAlpha = 0.35 * alphaScale;
+    ctx.fillStyle = radial;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.restore();
+  }
+
+  function applyPatternGrain(ctx, W, H, grain = 0) {
+    const amount = normalizePatternPercent(grain, 0);
+    if (amount <= 0) return;
+
+    const tile = getPatternNoiseTile(amount);
+    if (!tile) return;
+
+    const texture = ctx.createPattern(tile, 'repeat');
+    if (!texture) return;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'soft-light';
+    ctx.globalAlpha = 0.2 + (amount / 100) * 0.45;
+    ctx.fillStyle = texture;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+
+  function getPatternNoiseTile(amount) {
+    const level = Math.max(0, Math.min(100, Math.round(amount)));
+    const cacheKey = `${level}`;
+    if (patternNoiseTileCache.has(cacheKey)) {
+      return patternNoiseTileCache.get(cacheKey);
+    }
+
+    const tileSize = 160;
+    const tile = document.createElement('canvas');
+    tile.width = tileSize;
+    tile.height = tileSize;
+
+    const tctx = tile.getContext('2d');
+    const image = tctx.createImageData(tileSize, tileSize);
+    const data = image.data;
+    const noiseStrength = level / 100;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const variance = (Math.random() - 0.5) * 150 * noiseStrength;
+      const shade = Math.max(0, Math.min(255, 128 + variance));
+      data[i] = shade;
+      data[i + 1] = shade;
+      data[i + 2] = shade;
+      data[i + 3] = Math.round(90 * noiseStrength);
+    }
+
+    tctx.putImageData(image, 0, 0);
+    patternNoiseTileCache.set(cacheKey, tile);
+    return tile;
+  }
+
+  function normalizePatternPercent(value, fallback) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return fallback;
+    return Math.max(0, Math.min(100, num));
   }
 
   /**

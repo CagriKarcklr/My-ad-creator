@@ -28,6 +28,11 @@ window.BackgroundLibrary = (() => {
       { id: 'brand-13', name: 'Lilac Haze', colors: ['#C8B6FF', '#E2D1F9', '#FFE6F0'], angle: 160 },
       { id: 'brand-14', name: 'Grape Soda', colors: ['#6C3483', '#A569BD', '#D7BDE2'], angle: 145 },
       { id: 'brand-15', name: 'Wisteria', colors: ['#8E44AD', '#BB8FCE', '#EBDEF0'], angle: 170 },
+      { id: 'brand-16', name: 'Velvet Plum', colors: ['#4A2C6D', '#7D4FA3', '#C3A4E6'], angle: 165 },
+      { id: 'brand-17', name: 'Orchid Mist', colors: ['#9D7DD8', '#C6A8EB', '#F1E8FF'], angle: 180 },
+      { id: 'brand-18', name: 'Mulberry Sky', colors: ['#5E3A87', '#8A63B8', '#D6BCEB'], angle: 150 },
+      { id: 'brand-19', name: 'Aster Glow', colors: ['#7251A1', '#A684C7', '#E8D9F7'], angle: 170 },
+      { id: 'brand-20', name: 'Moonlit Iris', colors: ['#3E356B', '#6E64A8', '#B0A8D9', '#E0DAF2'], angle: 180 },
     ],
 
     // ===== PASTEL DREAMS =====
@@ -47,6 +52,11 @@ window.BackgroundLibrary = (() => {
       { id: 'pastel-13', name: 'Aqua Mint', colors: ['#B2F5EA', '#C4F0FC', '#E8D5F5'], angle: 135 },
       { id: 'pastel-14', name: 'Vanilla Sky', colors: ['#FFF8DC', '#FAEBD7', '#FFE4E1'], angle: 180 },
       { id: 'pastel-15', name: 'Candy Floss', colors: ['#FFB6C1', '#DDA0DD', '#B0E0E6'], angle: 135 },
+      { id: 'pastel-16', name: 'Milk Tea', colors: ['#F7E8D0', '#EFD3C5', '#DCC6E0'], angle: 170 },
+      { id: 'pastel-17', name: 'Cloud Berry', colors: ['#FDE2E4', '#CDE7F0', '#D8F3DC'], angle: 150 },
+      { id: 'pastel-18', name: 'Lilac Cream', colors: ['#E9D5FF', '#F5EFFF', '#FFF9FE'], angle: 180 },
+      { id: 'pastel-19', name: 'Soft Apricot', colors: ['#FFE5B4', '#FFD6C0', '#FEE8D6'], angle: 160 },
+      { id: 'pastel-20', name: 'Sunday Morning', colors: ['#EAF4FF', '#F3E8FF', '#FFF0F5'], angle: 165 },
     ],
 
     // ===== BOLD & VIBRANT =====
@@ -63,6 +73,10 @@ window.BackgroundLibrary = (() => {
       { id: 'bold-10', name: 'Vivid Pro', colors: ['#7F00FF', '#E100FF'], angle: 135 },
       { id: 'bold-11', name: 'Cherry Pop', colors: ['#EB3349', '#F45C43'], angle: 135 },
       { id: 'bold-12', name: 'Lime Rush', colors: ['#56AB2F', '#A8E063'], angle: 135 },
+      { id: 'bold-13', name: 'Volt Orange', colors: ['#f12711', '#f5af19', '#ffee55'], angle: 135 },
+      { id: 'bold-14', name: 'Cyber Aqua', colors: ['#00f5ff', '#00bbf9', '#9b5de5'], angle: 140 },
+      { id: 'bold-15', name: 'Crimson Beam', colors: ['#b31217', '#e52d27', '#ff8a00'], angle: 145 },
+      { id: 'bold-16', name: 'Ultra Magenta', colors: ['#833ab4', '#fd1d1d', '#fcb045'], angle: 140 },
     ],
 
     // ===== DARK & MOODY =====
@@ -77,6 +91,10 @@ window.BackgroundLibrary = (() => {
       { id: 'dark-8', name: 'Deep Purple', colors: ['#1a0a2e', '#2d1654', '#4a2080'], angle: 180 },
       { id: 'dark-9', name: 'Moody Blue', colors: ['#0D1117', '#161B22', '#21262D'], angle: 180 },
       { id: 'dark-10', name: 'Noir', colors: ['#000000', '#1a1a2e'], angle: 180 },
+      { id: 'dark-11', name: 'Carbon Mist', colors: ['#0b0d10', '#1b2026', '#2f3742'], angle: 175 },
+      { id: 'dark-12', name: 'Ink Violet', colors: ['#110f1a', '#241f3a', '#3e3561'], angle: 180 },
+      { id: 'dark-13', name: 'Abyss', colors: ['#030b12', '#0b1a24', '#153648'], angle: 180 },
+      { id: 'dark-14', name: 'Steel Night', colors: ['#121417', '#232a31', '#38424f'], angle: 170 },
     ],
 
     // ===== WARM TONES =====
@@ -91,6 +109,10 @@ window.BackgroundLibrary = (() => {
       { id: 'warm-8', name: 'Peach Sunset', colors: ['#FFDAB9', '#FF8C69', '#FF6347'], angle: 180 },
       { id: 'warm-9', name: 'Burnt Sienna', colors: ['#8B4513', '#CD853F', '#DEB887'], angle: 135 },
       { id: 'warm-10', name: 'Sandy Beach', colors: ['#F5F5DC', '#DEB887', '#D2691E'], angle: 180 },
+      { id: 'warm-11', name: 'Paprika', colors: ['#c44536', '#e17055', '#fab1a0'], angle: 145 },
+      { id: 'warm-12', name: 'Apricot Jam', colors: ['#ff9f43', '#feca57', '#ffdd95'], angle: 140 },
+      { id: 'warm-13', name: 'Toffee Cream', colors: ['#9c6644', '#ddb892', '#ede0d4'], angle: 165 },
+      { id: 'warm-14', name: 'Solar Flare', colors: ['#ff6b35', '#f7c59f', '#ffdd57'], angle: 135 },
     ],
 
     // ===== COOL TONES =====
@@ -105,6 +127,10 @@ window.BackgroundLibrary = (() => {
       { id: 'cool-8', name: 'Icy Lake', colors: ['#E6DADA', '#274046'], angle: 135 },
       { id: 'cool-9', name: 'Nordic Sky', colors: ['#A8C0FF', '#3F2B96'], angle: 135 },
       { id: 'cool-10', name: 'Glacier', colors: ['#E0F7FA', '#80DEEA', '#4DD0E1'], angle: 180 },
+      { id: 'cool-11', name: 'Ice Mint', colors: ['#d7fffe', '#9be7ff', '#80ffdb'], angle: 155 },
+      { id: 'cool-12', name: 'Blue Steel', colors: ['#4b6cb7', '#182848', '#5f7da5'], angle: 170 },
+      { id: 'cool-13', name: 'Polar Night', colors: ['#283e51', '#485563', '#6d7f94'], angle: 180 },
+      { id: 'cool-14', name: 'Aqua Drift', colors: ['#2193b0', '#6dd5ed', '#b2fefa'], angle: 145 },
     ],
 
     // ===== NEUTRAL & CLEAN =====
@@ -117,6 +143,10 @@ window.BackgroundLibrary = (() => {
       { id: 'neutral-6', name: 'Cream', colors: ['#FFF8E7', '#FFE4C4', '#FFEFD5'], angle: 160 },
       { id: 'neutral-7', name: 'Smoke', colors: ['#96969C', '#AAAAB0', '#C8C8CC'], angle: 180 },
       { id: 'neutral-8', name: 'Parchment', colors: ['#F5F0E1', '#E8DCC8', '#DBD0B8'], angle: 180 },
+      { id: 'neutral-9', name: 'Linen', colors: ['#f8f4ef', '#eee6dc', '#e3d7ca'], angle: 175 },
+      { id: 'neutral-10', name: 'Clay Gray', colors: ['#c6c1b9', '#d8d2c8', '#ece8df'], angle: 180 },
+      { id: 'neutral-11', name: 'Fog Paper', colors: ['#f3f5f7', '#e7ebef', '#dfe4ea'], angle: 170 },
+      { id: 'neutral-12', name: 'Soft Graphite', colors: ['#5b616b', '#7a828d', '#b7bec8'], angle: 180 },
     ],
 
     // ===== SUNSET & SUNRISE =====
@@ -129,6 +159,10 @@ window.BackgroundLibrary = (() => {
       { id: 'sunset-6', name: 'Dusk', colors: ['#2C3E50', '#FD746C', '#FF9068'], angle: 180 },
       { id: 'sunset-7', name: 'Horizon', colors: ['#FDC830', '#F37335'], angle: 135 },
       { id: 'sunset-8', name: 'Twilight', colors: ['#0F2027', '#203A43', '#F37335', '#F09819'], angle: 180 },
+      { id: 'sunset-9', name: 'Afterglow', colors: ['#ff7e5f', '#feb47b', '#ffd3a5'], angle: 145 },
+      { id: 'sunset-10', name: 'Solar Peach', colors: ['#f76b1c', '#fad961', '#fcb69f'], angle: 140 },
+      { id: 'sunset-11', name: 'Pink Ember', colors: ['#ee0979', '#ff6a00', '#ffd194'], angle: 135 },
+      { id: 'sunset-12', name: 'Evening Tide', colors: ['#355c7d', '#6c5b7b', '#f67280', '#f8b195'], angle: 175 },
     ],
 
     // ===== NATURE INSPIRED =====
@@ -141,6 +175,10 @@ window.BackgroundLibrary = (() => {
       { id: 'nature-6', name: 'Wildflower', colors: ['#FF6B9D', '#C06C84', '#6C5B7B'], angle: 135 },
       { id: 'nature-7', name: 'Rain Forest', colors: ['#0B3D0B', '#1B5E20', '#388E3C'], angle: 180 },
       { id: 'nature-8', name: 'Desert Sand', colors: ['#C2956E', '#D4A574', '#E8C8A0'], angle: 180 },
+      { id: 'nature-9', name: 'Moss Valley', colors: ['#2c5f2d', '#97bc62', '#d8e9a8'], angle: 155 },
+      { id: 'nature-10', name: 'Lagoon', colors: ['#006d77', '#83c5be', '#edf6f9'], angle: 160 },
+      { id: 'nature-11', name: 'Terrace', colors: ['#606c38', '#a3b18a', '#dde5b6'], angle: 170 },
+      { id: 'nature-12', name: 'Woodland Fog', colors: ['#4a5759', '#b0c4b1', '#edf2d0'], angle: 175 },
     ],
 
     // ===== METALLIC & LUXURY =====
@@ -151,6 +189,10 @@ window.BackgroundLibrary = (() => {
       { id: 'luxury-4', name: 'Bronze', colors: ['#8B6914', '#CD853F', '#DAA520'], angle: 135 },
       { id: 'luxury-5', name: 'Champagne', colors: ['#F7E7CE', '#F0D5A8', '#E8C87C'], angle: 180 },
       { id: 'luxury-6', name: 'Black Gold', colors: ['#1a1a1a', '#3a3a1a', '#BF953F'], angle: 180 },
+      { id: 'luxury-7', name: 'Pearl', colors: ['#f7f7f2', '#ecebe4', '#d9d7cc'], angle: 175 },
+      { id: 'luxury-8', name: 'Emerald Silk', colors: ['#0b6e4f', '#3fa34d', '#9ef01a'], angle: 150 },
+      { id: 'luxury-9', name: 'Satin Silver', colors: ['#9ba5b1', '#c8d0d8', '#eef2f5'], angle: 170 },
+      { id: 'luxury-10', name: 'Ruby Gold', colors: ['#7a0019', '#c1121f', '#f4a261', '#ffd166'], angle: 145 },
     ],
   };
 
@@ -454,6 +496,358 @@ window.BackgroundLibrary = (() => {
         }
       },
     },
+    {
+      id: 'pat-ribbon-layers',
+      name: 'Ribbon Layers',
+      generate(ctx, W, H, accent) {
+        const base = accent || '#B6AEDB';
+        const deep = adjustBrightness(base, -34);
+        const light = adjustBrightness(base, 42);
+        const haze = adjustBrightness(base, 70);
+
+        const baseGrad = ctx.createLinearGradient(0, 0, 0, H);
+        baseGrad.addColorStop(0, haze);
+        baseGrad.addColorStop(0.5, light);
+        baseGrad.addColorStop(1, adjustBrightness(base, 22));
+        ctx.fillStyle = baseGrad;
+        ctx.fillRect(0, 0, W, H);
+
+        const ribbons = [
+          { y: -0.06, h: 0.2, tint: deep, alpha: 0.18 },
+          { y: 0.18, h: 0.17, tint: base, alpha: 0.24 },
+          { y: 0.42, h: 0.19, tint: light, alpha: 0.2 },
+          { y: 0.68, h: 0.21, tint: deep, alpha: 0.16 },
+          { y: 0.86, h: 0.2, tint: base, alpha: 0.14 },
+        ];
+
+        ctx.save();
+        ctx.translate(W * 0.5, H * 0.5);
+        ctx.rotate(-0.08);
+        ctx.translate(-W * 0.5, -H * 0.5);
+
+        for (const ribbon of ribbons) {
+          const y = H * ribbon.y;
+          const h = H * ribbon.h;
+          const grad = ctx.createLinearGradient(0, y, W, y + h);
+          grad.addColorStop(0, `${ribbon.tint}00`);
+          grad.addColorStop(0.2, `${ribbon.tint}${Math.round(ribbon.alpha * 255).toString(16).padStart(2, '0')}`);
+          grad.addColorStop(0.8, `${ribbon.tint}${Math.round((ribbon.alpha * 0.7) * 255).toString(16).padStart(2, '0')}`);
+          grad.addColorStop(1, `${ribbon.tint}00`);
+          ctx.fillStyle = grad;
+          ctx.fillRect(-W * 0.2, y, W * 1.4, h);
+        }
+        ctx.restore();
+      },
+    },
+    {
+      id: 'pat-fluid-glow',
+      name: 'Fluid Glow',
+      generate(ctx, W, H, accent) {
+        const base = accent || '#8B7FD3';
+        const bgGrad = ctx.createLinearGradient(0, 0, W, H);
+        bgGrad.addColorStop(0, adjustBrightness(base, 18));
+        bgGrad.addColorStop(1, adjustBrightness(base, -20));
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, W, H);
+
+        const spots = [
+          { x: 0.18, y: 0.2, r: 0.42, c: adjustBrightness(base, 70), a: 0.5 },
+          { x: 0.82, y: 0.18, r: 0.36, c: adjustBrightness(base, 45), a: 0.42 },
+          { x: 0.75, y: 0.78, r: 0.4, c: adjustBrightness(base, -5), a: 0.46 },
+          { x: 0.22, y: 0.82, r: 0.34, c: adjustBrightness(base, 28), a: 0.38 },
+        ];
+
+        ctx.save();
+        ctx.globalCompositeOperation = 'screen';
+        for (const spot of spots) {
+          const radius = Math.max(W, H) * spot.r;
+          const g = ctx.createRadialGradient(
+            spot.x * W, spot.y * H, 0,
+            spot.x * W, spot.y * H, radius
+          );
+          g.addColorStop(0, `${spot.c}${Math.round(spot.a * 255).toString(16).padStart(2, '0')}`);
+          g.addColorStop(0.55, `${spot.c}${Math.round((spot.a * 0.35) * 255).toString(16).padStart(2, '0')}`);
+          g.addColorStop(1, `${spot.c}00`);
+          ctx.fillStyle = g;
+          ctx.fillRect(0, 0, W, H);
+        }
+        ctx.restore();
+      },
+    },
+    {
+      id: 'pat-wave-panels',
+      name: 'Wave Panels',
+      generate(ctx, W, H, accent) {
+        const base = accent || '#A296DF';
+        ctx.fillStyle = adjustBrightness(base, 46);
+        ctx.fillRect(0, 0, W, H);
+
+        const panelColors = [
+          adjustBrightness(base, -18),
+          adjustBrightness(base, 4),
+          adjustBrightness(base, 28),
+          adjustBrightness(base, -8),
+        ];
+
+        for (let i = 0; i < panelColors.length; i++) {
+          const y0 = H * (0.08 + i * 0.22);
+          const amp = H * (0.04 + i * 0.004);
+          ctx.beginPath();
+          ctx.moveTo(0, y0);
+          for (let x = 0; x <= W; x += 8) {
+            const y = y0 + Math.sin((x / W) * Math.PI * (1.6 + i * 0.35) + i * 0.9) * amp;
+            ctx.lineTo(x, y);
+          }
+          const yBottom = y0 + H * 0.2;
+          for (let x = W; x >= 0; x -= 8) {
+            const y = yBottom + Math.sin((x / W) * Math.PI * (1.6 + i * 0.35) + i * 0.9 + 0.6) * amp;
+            ctx.lineTo(x, y);
+          }
+          ctx.closePath();
+          ctx.fillStyle = `${panelColors[i]}${Math.round(0.2 * 255).toString(16).padStart(2, '0')}`;
+          ctx.fill();
+        }
+      },
+    },
+    {
+      id: 'pat-orbital-noise',
+      name: 'Orbital Noise',
+      generate(ctx, W, H, accent) {
+        const base = accent || '#7F74CC';
+        const grad = ctx.createLinearGradient(0, 0, W, H);
+        grad.addColorStop(0, adjustBrightness(base, -22));
+        grad.addColorStop(1, adjustBrightness(base, 10));
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, W, H);
+
+        const rng = mulberry32(808);
+        const colors = [
+          adjustBrightness(base, 52),
+          adjustBrightness(base, 28),
+          adjustBrightness(base, -8),
+        ];
+
+        ctx.save();
+        ctx.globalCompositeOperation = 'screen';
+        for (let i = 0; i < 16; i++) {
+          const x = rng() * W;
+          const y = rng() * H;
+          const r = (0.08 + rng() * 0.22) * Math.min(W, H);
+          const c = colors[i % colors.length];
+          const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+          g.addColorStop(0, `${c}${Math.round(0.32 * 255).toString(16).padStart(2, '0')}`);
+          g.addColorStop(1, `${c}00`);
+          ctx.fillStyle = g;
+          ctx.fillRect(x - r, y - r, r * 2, r * 2);
+        }
+        ctx.restore();
+
+        const imageData = ctx.getImageData(0, 0, W, H);
+        const data = imageData.data;
+        for (let i = 0; i < data.length; i += 4) {
+          const n = (rng() - 0.5) * 16;
+          data[i] = Math.max(0, Math.min(255, data[i] + n));
+          data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + n));
+          data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + n));
+        }
+        ctx.putImageData(imageData, 0, 0);
+      },
+    },
+    {
+      id: 'pat-folded-paper',
+      name: 'Folded Paper',
+      generate(ctx, W, H, accent) {
+        const base = accent || '#B7ADE0';
+        ctx.fillStyle = adjustBrightness(base, 58);
+        ctx.fillRect(0, 0, W, H);
+
+        const folds = [
+          { points: [[0, 0.18], [1, 0.08], [1, 0.28], [0, 0.34]], c: adjustBrightness(base, 20), a: 0.45 },
+          { points: [[0, 0.34], [1, 0.26], [1, 0.46], [0, 0.54]], c: adjustBrightness(base, 8), a: 0.38 },
+          { points: [[0, 0.52], [1, 0.44], [1, 0.64], [0, 0.72]], c: adjustBrightness(base, -6), a: 0.34 },
+          { points: [[0, 0.72], [1, 0.62], [1, 0.84], [0, 0.92]], c: adjustBrightness(base, 15), a: 0.32 },
+        ];
+
+        for (const fold of folds) {
+          ctx.beginPath();
+          ctx.moveTo(fold.points[0][0] * W, fold.points[0][1] * H);
+          for (let i = 1; i < fold.points.length; i++) {
+            ctx.lineTo(fold.points[i][0] * W, fold.points[i][1] * H);
+          }
+          ctx.closePath();
+          ctx.fillStyle = `${fold.c}${Math.round(fold.a * 255).toString(16).padStart(2, '0')}`;
+          ctx.fill();
+        }
+      },
+    },
+    {
+      id: 'pat-liquid-slices',
+      name: 'Liquid Slices',
+      generate(ctx, W, H, accent) {
+        const base = accent || '#7D78D8';
+        const bg = ctx.createLinearGradient(0, 0, W, H);
+        bg.addColorStop(0, adjustBrightness(base, -28));
+        bg.addColorStop(1, adjustBrightness(base, 24));
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, W, H);
+
+        const slices = [
+          { x: 0.08, y: 0.18, w: 0.4, h: 0.16, c: adjustBrightness(base, 62) },
+          { x: 0.45, y: 0.12, w: 0.48, h: 0.2, c: adjustBrightness(base, 28) },
+          { x: 0.1, y: 0.42, w: 0.52, h: 0.18, c: adjustBrightness(base, 12) },
+          { x: 0.4, y: 0.58, w: 0.5, h: 0.2, c: adjustBrightness(base, 44) },
+          { x: 0.08, y: 0.76, w: 0.45, h: 0.16, c: adjustBrightness(base, -2) },
+        ];
+
+        ctx.save();
+        ctx.globalCompositeOperation = 'screen';
+        for (const slice of slices) {
+          const x = slice.x * W;
+          const y = slice.y * H;
+          const w = slice.w * W;
+          const h = slice.h * H;
+          const g = ctx.createLinearGradient(x, y, x + w, y + h);
+          g.addColorStop(0, `${slice.c}00`);
+          g.addColorStop(0.15, `${slice.c}${Math.round(0.42 * 255).toString(16).padStart(2, '0')}`);
+          g.addColorStop(0.85, `${slice.c}${Math.round(0.18 * 255).toString(16).padStart(2, '0')}`);
+          g.addColorStop(1, `${slice.c}00`);
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.moveTo(x, y + h * 0.5);
+          ctx.bezierCurveTo(x + w * 0.22, y, x + w * 0.78, y + h, x + w, y + h * 0.45);
+          ctx.bezierCurveTo(x + w * 0.75, y + h * 1.08, x + w * 0.25, y - h * 0.08, x, y + h * 0.5);
+          ctx.fill();
+        }
+        ctx.restore();
+      },
+    },
+    {
+      id: 'pat-hex-lattice',
+      name: 'Hex Lattice',
+      generate(ctx, W, H, accent) {
+        const base = accent || '#8C7CD8';
+        const bg = ctx.createLinearGradient(0, 0, W, H);
+        bg.addColorStop(0, adjustBrightness(base, 34));
+        bg.addColorStop(1, adjustBrightness(base, -12));
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, W, H);
+
+        const stroke = adjustBrightness(base, -24);
+        const size = Math.max(18, W * 0.055);
+        const h = Math.sqrt(3) * size;
+
+        ctx.save();
+        ctx.strokeStyle = `${stroke}44`;
+        ctx.lineWidth = 1.2;
+
+        for (let row = -1; row < H / h + 2; row++) {
+          const y = row * h;
+          const offset = row % 2 === 0 ? 0 : size * 1.5;
+          for (let x = -size * 2; x < W + size * 2; x += size * 3) {
+            const cx = x + offset;
+            ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+              const a = (Math.PI / 3) * i + Math.PI / 6;
+              const px = cx + Math.cos(a) * size;
+              const py = y + Math.sin(a) * size;
+              if (i === 0) ctx.moveTo(px, py);
+              else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      },
+    },
+    {
+      id: 'pat-sunburst',
+      name: 'Sunburst',
+      generate(ctx, W, H, accent) {
+        const base = accent || '#7E70CF';
+        const centerX = W * 0.15;
+        const centerY = H * 0.1;
+        const bg = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, Math.max(W, H));
+        bg.addColorStop(0, adjustBrightness(base, 58));
+        bg.addColorStop(0.45, adjustBrightness(base, 22));
+        bg.addColorStop(1, adjustBrightness(base, -16));
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, W, H);
+
+        const rays = 40;
+        const rayColor = adjustBrightness(base, -26);
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.globalAlpha = 0.15;
+        for (let i = 0; i < rays; i++) {
+          const angle = (Math.PI * 2 * i) / rays;
+          ctx.rotate(angle);
+          ctx.fillStyle = rayColor;
+          ctx.fillRect(0, -2, Math.max(W, H) * 1.2, 4);
+          ctx.rotate(-angle);
+        }
+        ctx.restore();
+      },
+    },
+    {
+      id: 'pat-arc-flow',
+      name: 'Arc Flow',
+      generate(ctx, W, H, accent) {
+        const base = accent || '#9A8AE0';
+        const grad = ctx.createLinearGradient(0, 0, W, H);
+        grad.addColorStop(0, adjustBrightness(base, 40));
+        grad.addColorStop(1, adjustBrightness(base, -8));
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, W, H);
+
+        const rng = mulberry32(519);
+        ctx.save();
+        ctx.lineWidth = Math.max(2, W * 0.007);
+        for (let i = 0; i < 24; i++) {
+          const cx = (0.05 + rng() * 0.9) * W;
+          const cy = (0.05 + rng() * 0.9) * H;
+          const radius = (0.08 + rng() * 0.28) * Math.min(W, H);
+          const start = rng() * Math.PI * 2;
+          const end = start + (0.6 + rng() * 1.6) * Math.PI;
+          ctx.strokeStyle = `${adjustBrightness(base, -18)}${Math.round((0.12 + rng() * 0.2) * 255).toString(16).padStart(2, '0')}`;
+          ctx.beginPath();
+          ctx.arc(cx, cy, radius, start, end);
+          ctx.stroke();
+        }
+        ctx.restore();
+      },
+    },
+    {
+      id: 'pat-cutout-rings',
+      name: 'Cutout Rings',
+      generate(ctx, W, H, accent) {
+        const base = accent || '#8578D5';
+        ctx.fillStyle = adjustBrightness(base, 46);
+        ctx.fillRect(0, 0, W, H);
+
+        const rings = [
+          { x: 0.18, y: 0.2, r: 0.26, a: 0.2 },
+          { x: 0.85, y: 0.12, r: 0.24, a: 0.16 },
+          { x: 0.9, y: 0.82, r: 0.34, a: 0.18 },
+          { x: 0.14, y: 0.78, r: 0.3, a: 0.15 },
+        ];
+
+        ctx.save();
+        for (const ring of rings) {
+          const cx = ring.x * W;
+          const cy = ring.y * H;
+          const outer = ring.r * Math.min(W, H);
+          const inner = outer * 0.62;
+          const ringGrad = ctx.createRadialGradient(cx, cy, inner, cx, cy, outer);
+          ringGrad.addColorStop(0, `${adjustBrightness(base, 12)}00`);
+          ringGrad.addColorStop(0.7, `${adjustBrightness(base, -18)}${Math.round(ring.a * 255).toString(16).padStart(2, '0')}`);
+          ringGrad.addColorStop(1, `${adjustBrightness(base, -28)}00`);
+          ctx.fillStyle = ringGrad;
+          ctx.fillRect(cx - outer, cy - outer, outer * 2, outer * 2);
+        }
+        ctx.restore();
+      },
+    },
   ];
 
   // ==================== SOLID COLORS ====================
@@ -483,6 +877,16 @@ window.BackgroundLibrary = (() => {
     { id: 'solid-dustyblue', name: 'Dusty Blue', color: '#6495AD' },
     { id: 'solid-terracotta', name: 'Terracotta', color: '#CC6633' },
     { id: 'solid-olive', name: 'Olive', color: '#808000' },
+    { id: 'solid-oat', name: 'Oat', color: '#E8DDCF' },
+    { id: 'solid-sand', name: 'Sand', color: '#DCC7AA' },
+    { id: 'solid-denim', name: 'Denim', color: '#3F5C7A' },
+    { id: 'solid-midnightblue', name: 'Midnight Blue', color: '#191970' },
+    { id: 'solid-pine', name: 'Pine', color: '#2E5E4E' },
+    { id: 'solid-plum', name: 'Plum', color: '#6D3B74' },
+    { id: 'solid-ruby', name: 'Ruby', color: '#A4133C' },
+    { id: 'solid-charcoalmist', name: 'Charcoal Mist', color: '#4A4F57' },
+    { id: 'solid-icegray', name: 'Ice Gray', color: '#D9E2EC' },
+    { id: 'solid-moss', name: 'Moss', color: '#6A8F4E' },
   ];
 
   // ==================== SIZE PRESETS ====================

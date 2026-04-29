@@ -59,7 +59,10 @@
         angle: 180,
         color: '#F5F0EB',
         url: null,
-        patternId: null,
+        patternId: 'pat-ribbon-layers',
+        patternColors: ['#8D7EDB', '#C5B8F0', '#ECE5FF'],
+        patternIntensity: 72,
+        patternGrain: 0,
         customImage: null,
         blur: 0,
         gradientId: 'brand-1',
@@ -121,6 +124,9 @@
   // ==================== DOM ====================
   let canvas, canvasWrapper;
   let active = false;
+  const SNAP_THRESHOLD_PX = 12;
+  let canvasDragState = null;
+  let dragGuideLines = [];
 
   function init() {
     canvas = document.getElementById('social-canvas');
@@ -128,6 +134,7 @@
     if (!canvas) return;
 
     setupCanvas();
+    setupCanvasDrag();
     setupSizePresets();
     setupUpload();
     setupBackgroundPanel();
@@ -154,6 +161,12 @@
 
   function deactivate() {
     active = false;
+    canvasDragState = null;
+    dragGuideLines = [];
+    if (canvas) {
+      canvas.classList.remove('is-dragging');
+      canvas.style.cursor = 'default';
+    }
   }
 
   // Expose globally for navigation
@@ -171,8 +184,467 @@
     renderPending = true;
     requestAnimationFrame(() => {
       renderPending = false;
-      if (active) SocialRenderer.render(canvas, state);
+      if (active) {
+        // Auto-exit AI mode if background switched away
+        if (aiModeActive && state.background.type !== 'ai-generated') {
+          exitAIMode();
+        }
+        SocialRenderer.render(canvas, state);
+        drawDragGuides();
+      }
     });
+  }
+
+  function setupCanvasDrag() {
+    if (!canvas) return;
+    canvas.classList.add('canvas-draggable');
+    canvas.addEventListener('pointerdown', onCanvasPointerDown);
+    canvas.addEventListener('pointermove', onCanvasPointerMove);
+    canvas.addEventListener('pointerup', onCanvasPointerUp);
+    canvas.addEventListener('pointercancel', onCanvasPointerUp);
+    canvas.addEventListener('pointerleave', () => {
+      if (!canvasDragState) canvas.style.cursor = 'default';
+    });
+  }
+
+  function onCanvasPointerDown(e) {
+    if (!active) return;
+
+    const point = toCanvasPoint(e);
+    const hit = getTopmostHit(point.x, point.y);
+    if (!hit) {
+      updateCanvasCursor(point);
+      return;
+    }
+
+    canvasDragState = {
+      pointerId: e.pointerId,
+      itemId: hit.id,
+      itemType: hit.type,
+      grabDx: point.x - hit.cx,
+      grabDy: point.y - hit.cy,
+    };
+
+    dragGuideLines = [];
+    canvas.classList.add('is-dragging');
+    canvas.style.cursor = 'grabbing';
+    if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }
+
+  function onCanvasPointerMove(e) {
+    if (!active) return;
+
+    const point = toCanvasPoint(e);
+    if (!canvasDragState || canvasDragState.pointerId !== e.pointerId) {
+      updateCanvasCursor(point);
+      return;
+    }
+
+    const nextCx = point.x - canvasDragState.grabDx;
+    const nextCy = point.y - canvasDragState.grabDy;
+    const didMove = applyDraggedPosition(canvasDragState.itemId, nextCx, nextCy);
+    if (didMove) requestRender();
+    e.preventDefault();
+  }
+
+  function onCanvasPointerUp(e) {
+    if (!canvasDragState || canvasDragState.pointerId !== e.pointerId) return;
+
+    const draggedType = canvasDragState.itemType;
+
+    if (canvas.releasePointerCapture && canvas.hasPointerCapture && canvas.hasPointerCapture(e.pointerId)) {
+      canvas.releasePointerCapture(e.pointerId);
+    }
+
+    canvasDragState = null;
+    dragGuideLines = [];
+    canvas.classList.remove('is-dragging');
+    updateCanvasCursor(toCanvasPoint(e));
+
+    if (draggedType === 'text') renderTextLayers();
+    requestRender();
+  }
+
+  function toCanvasPoint(e) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
+    };
+  }
+
+  function updateCanvasCursor(point) {
+    if (!active) return;
+    if (canvasDragState) {
+      canvas.style.cursor = 'grabbing';
+      return;
+    }
+    if (!point) {
+      canvas.style.cursor = 'default';
+      return;
+    }
+    const hit = getTopmostHit(point.x, point.y);
+    canvas.style.cursor = hit ? 'grab' : 'default';
+  }
+
+  function getTopmostHit(x, y) {
+    const items = getDraggableItems();
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i];
+      if (x >= item.left && x <= item.right && y >= item.top && y <= item.bottom) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  function getDraggableItems() {
+    const items = [];
+    const W = canvas.width;
+    const H = canvas.height;
+    const aiLockedPhone = state.background && state.background.type === 'ai-generated';
+    const phoneAspect = Renderer.PHONE_W_TO_H || (1456 / 3000);
+
+    if (!aiLockedPhone && state.showPhone !== false) {
+      const w = W * (state.phoneScale / 100);
+      const h = w / phoneAspect;
+      const cx = W * (state.phoneX / 100);
+      const cy = H * (state.phoneY / 100);
+      items.push({
+        id: 'phone-1',
+        type: 'phone',
+        index: 0,
+        cx,
+        cy,
+        w,
+        h,
+        left: cx - w / 2,
+        right: cx + w / 2,
+        top: cy - h / 2,
+        bottom: cy + h / 2,
+      });
+    }
+
+    if (!aiLockedPhone && state.showPhone2) {
+      const w = W * (state.phone2Scale / 100);
+      const h = w / phoneAspect;
+      const cx = W * (state.phone2X / 100);
+      const cy = H * (state.phone2Y / 100);
+      items.push({
+        id: 'phone-2',
+        type: 'phone',
+        index: 1,
+        cx,
+        cy,
+        w,
+        h,
+        left: cx - w / 2,
+        right: cx + w / 2,
+        top: cy - h / 2,
+        bottom: cy + h / 2,
+      });
+    }
+
+    for (const text of state.texts) {
+      const bounds = measureTextBounds(text, W, H);
+      if (!bounds) continue;
+      items.push({
+        id: `text-${text.id}`,
+        type: 'text',
+        textId: text.id,
+        ...bounds,
+      });
+    }
+
+    if (state.logo) {
+      const img = state.logo;
+      const imgW = img.naturalWidth || img.width;
+      const imgH = img.naturalHeight || img.height;
+      if (imgW > 0 && imgH > 0) {
+        const ratio = imgW / imgH;
+        const w = W * ((state.logoScale || 15) / 100);
+        const h = w / ratio;
+        const cx = W * (state.logoX / 100);
+        const cy = H * (state.logoY / 100);
+        items.push({
+          id: 'logo',
+          type: 'logo',
+          cx,
+          cy,
+          w,
+          h,
+          left: cx - w / 2,
+          right: cx + w / 2,
+          top: cy - h / 2,
+          bottom: cy + h / 2,
+        });
+      }
+    }
+
+    return items;
+  }
+
+  function measureTextBounds(text, canvasW, canvasH) {
+    if (!text.content || text.content.trim() === '') return null;
+
+    const ctx = canvas.getContext('2d');
+    const fontSize = text.size || 48;
+    const fontWeight = text.weight || 700;
+    const fontFamily = text.font || 'Inter';
+    const align = text.align || 'center';
+    const lineHeight = text.lineHeight || 1.15;
+    const maxWidth = (text.maxWidth / 100) * canvasW || canvasW * 0.85;
+    const letterSpacing = text.letterSpacing || 0;
+    const posX = (text.x / 100) * canvasW;
+    const posY = (text.y / 100) * canvasH;
+
+    ctx.save();
+    ctx.font = `${fontWeight} ${fontSize}px "${fontFamily}", "SF Pro Display", -apple-system, system-ui, sans-serif`;
+
+    const paragraphs = text.content.split('\n');
+    const lines = [];
+    for (const paragraph of paragraphs) {
+      const wrapped = wrapTextForBounds(ctx, paragraph, maxWidth);
+      for (const line of wrapped) lines.push(line);
+    }
+    if (lines.length === 0) lines.push('');
+
+    let minX = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let currentY = posY;
+    for (const line of lines) {
+      const lineWidth = measureLineWidth(ctx, line, letterSpacing);
+      let startX = posX;
+      if (align === 'center') startX = posX - lineWidth / 2;
+      else if (align === 'right') startX = posX - lineWidth;
+      minX = Math.min(minX, startX);
+      maxX = Math.max(maxX, startX + lineWidth);
+      currentY += fontSize * lineHeight;
+    }
+
+    ctx.restore();
+
+    const width = Math.max(1, maxX - minX);
+    const height = Math.max(1, currentY - posY);
+    const cx = minX + width / 2;
+    const cy = posY + height / 2;
+
+    return {
+      cx,
+      cy,
+      w: width,
+      h: height,
+      left: minX,
+      right: minX + width,
+      top: posY,
+      bottom: posY + height,
+    };
+  }
+
+  function wrapTextForBounds(ctx, text, maxWidth) {
+    if (!text) return [''];
+    const words = text.split(' ');
+    const lines = [];
+    let currentLine = '';
+
+    for (const word of words) {
+      const testLine = currentLine ? `${currentLine} ${word}` : word;
+      if (ctx.measureText(testLine).width > maxWidth && currentLine) {
+        lines.push(currentLine);
+        currentLine = word;
+      } else {
+        currentLine = testLine;
+      }
+    }
+
+    if (currentLine) lines.push(currentLine);
+    if (lines.length === 0) lines.push('');
+    return lines;
+  }
+
+  function measureLineWidth(ctx, text, spacing) {
+    if (!text) return 0;
+    if (!spacing) return ctx.measureText(text).width;
+
+    let width = 0;
+    for (let i = 0; i < text.length; i++) {
+      width += ctx.measureText(text[i]).width;
+      if (i < text.length - 1) width += spacing;
+    }
+    return width;
+  }
+
+  function applyDraggedPosition(itemId, proposedCx, proposedCy) {
+    const items = getDraggableItems();
+    const activeItem = items.find((item) => item.id === itemId);
+    if (!activeItem) return false;
+
+    const others = items.filter((item) => item.id !== itemId);
+    const snapped = snapToGuides(activeItem, proposedCx, proposedCy, others, canvas.width, canvas.height);
+    let xPct = (snapped.cx / canvas.width) * 100;
+    let yPct = (snapped.cy / canvas.height) * 100;
+
+    if (activeItem.type === 'phone') {
+      if (activeItem.index === 0) {
+        const [minX, maxX] = getSliderBounds('social-phone-x', 0, 100);
+        const [minY, maxY] = getSliderBounds('social-phone-y', 0, 100);
+        state.phoneX = roundToStep(clamp(xPct, minX, maxX), 0.1);
+        state.phoneY = roundToStep(clamp(yPct, minY, maxY), 0.1);
+      } else {
+        const [minX, maxX] = getSliderBounds('social-phone2-x', 0, 100);
+        const [minY, maxY] = getSliderBounds('social-phone2-y', 0, 100);
+        state.phone2X = roundToStep(clamp(xPct, minX, maxX), 0.1);
+        state.phone2Y = roundToStep(clamp(yPct, minY, maxY), 0.1);
+      }
+      syncDraggedControls('phone', activeItem.index);
+    } else if (activeItem.type === 'text') {
+      const target = state.texts.find((text) => `text-${text.id}` === itemId);
+      if (target) {
+        target.x = roundToStep(clamp(xPct, 5, 95), 0.1);
+        target.y = roundToStep(clamp(yPct, 0, 95), 0.1);
+      }
+    } else if (activeItem.type === 'logo') {
+      const [minX, maxX] = getSliderBounds('social-logo-x', 0, 100);
+      const [minY, maxY] = getSliderBounds('social-logo-y', 0, 100);
+      state.logoX = roundToStep(clamp(xPct, minX, maxX), 0.1);
+      state.logoY = roundToStep(clamp(yPct, minY, maxY), 0.1);
+      syncDraggedControls('logo');
+    }
+
+    dragGuideLines = snapped.guides;
+    return true;
+  }
+
+  function snapToGuides(activeItem, cx, cy, otherItems, W, H) {
+    const xCandidates = [W / 2];
+    const yCandidates = [H / 2];
+    for (const item of otherItems) {
+      xCandidates.push(item.left, item.cx, item.right);
+      yCandidates.push(item.top, item.cy, item.bottom);
+    }
+
+    const xPoints = [cx - activeItem.w / 2, cx, cx + activeItem.w / 2];
+    const yPoints = [cy - activeItem.h / 2, cy, cy + activeItem.h / 2];
+
+    const bestX = findBestSnap(xPoints, xCandidates);
+    if (bestX) cx += bestX.delta;
+    const bestY = findBestSnap(yPoints, yCandidates);
+    if (bestY) cy += bestY.delta;
+
+    const guides = [];
+    if (bestX) guides.push({ axis: 'x', value: bestX.line });
+    if (bestY) guides.push({ axis: 'y', value: bestY.line });
+
+    return { cx, cy, guides };
+  }
+
+  function findBestSnap(points, guideLines) {
+    let best = null;
+    for (const point of points) {
+      for (const line of guideLines) {
+        const delta = line - point;
+        const dist = Math.abs(delta);
+        if (dist > SNAP_THRESHOLD_PX) continue;
+        if (!best || dist < best.dist) {
+          best = { delta, line, dist };
+        }
+      }
+    }
+    return best;
+  }
+
+  function getSliderBounds(id, fallbackMin, fallbackMax) {
+    const slider = document.getElementById(id);
+    if (!slider) return [fallbackMin, fallbackMax];
+    const min = Number.isFinite(parseFloat(slider.min)) ? parseFloat(slider.min) : fallbackMin;
+    const max = Number.isFinite(parseFloat(slider.max)) ? parseFloat(slider.max) : fallbackMax;
+    return [min, max];
+  }
+
+  function syncDraggedControls(type, index = 0) {
+    if (type === 'phone' && index === 0) {
+      setSlider('social-phone-x', state.phoneX, `${state.phoneX}%`);
+      setSlider('social-phone-y', state.phoneY, `${state.phoneY}%`);
+      return;
+    }
+    if (type === 'phone' && index === 1) {
+      setSlider('social-phone2-x', state.phone2X, `${state.phone2X}%`);
+      setSlider('social-phone2-y', state.phone2Y, `${state.phone2Y}%`);
+      return;
+    }
+    if (type === 'logo') {
+      setSlider('social-logo-x', state.logoX, `${state.logoX}%`);
+      setSlider('social-logo-y', state.logoY, `${state.logoY}%`);
+    }
+  }
+
+  function drawDragGuides() {
+    if (!dragGuideLines || dragGuideLines.length === 0) return;
+
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(125, 211, 252, 0.95)';
+    ctx.lineWidth = Math.max(1, Math.round(Math.min(W, H) * 0.0016));
+    ctx.setLineDash([10, 6]);
+
+    for (const guide of dragGuideLines) {
+      if (guide.axis === 'x') {
+        ctx.beginPath();
+        ctx.moveTo(guide.value, 0);
+        ctx.lineTo(guide.value, H);
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(0, guide.value);
+        ctx.lineTo(W, guide.value);
+        ctx.stroke();
+      }
+    }
+
+    ctx.restore();
+  }
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function roundToStep(value, step) {
+    return Math.round(value / step) * step;
+  }
+
+  // ==================== AI MODE ====================
+  let aiModeActive = false;
+
+  function enterAIMode() {
+    aiModeActive = true;
+    const phonePanel = document.querySelector('[data-social-panel="s-phone"]');
+    if (phonePanel) {
+      phonePanel.querySelectorAll('input, select').forEach(el => { el.disabled = true; });
+      let notice = phonePanel.querySelector('.ai-mode-notice');
+      if (!notice) {
+        notice = document.createElement('div');
+        notice.className = 'ai-mode-notice';
+        notice.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg> Phone is auto-positioned in AI mode. Switch to another background to unlock controls.';
+        phonePanel.insertBefore(notice, phonePanel.querySelector('.control-group'));
+      }
+      notice.classList.remove('hidden');
+    }
+  }
+
+  function exitAIMode() {
+    aiModeActive = false;
+    const phonePanel = document.querySelector('[data-social-panel="s-phone"]');
+    if (phonePanel) {
+      phonePanel.querySelectorAll('input, select').forEach(el => { el.disabled = false; });
+      const notice = phonePanel.querySelector('.ai-mode-notice');
+      if (notice) notice.classList.add('hidden');
+    }
   }
 
   // ==================== SIZE PRESETS ====================
@@ -379,7 +851,12 @@
 
     renderGradientGrid();
     setupIphoneMockupBgPanel();
+    setupAIGeneratePanel();
     renderPatternGrid();
+    setupPatternColorControls();
+    syncPatternColorInputs();
+    setupPatternToneControls();
+    syncPatternToneInputs();
     renderSolidColorGrid();
     setupCustomBgUpload();
     setupBgBlur();
@@ -585,6 +1062,271 @@
     reader.readAsDataURL(file);
   }
 
+  // ==================== AI GENERATE PANEL ====================
+  function setupAIGeneratePanel() {
+    const apiKeyInput = document.getElementById('ai-api-key');
+    const kimiKeyInput = document.getElementById('ai-kimi-api-key');
+    const keyPanel = document.getElementById('ai-key-panel');
+    const settingsToggle = document.getElementById('ai-settings-toggle');
+    const providerSelect = document.getElementById('ai-provider-select');
+    const openaiKeyGroup = document.getElementById('ai-openai-key-group');
+    const kimiKeyGroup = document.getElementById('ai-kimi-key-group');
+    const styleGrid = document.getElementById('ai-style-grid');
+    const promptInput = document.getElementById('ai-custom-prompt');
+    const generateBtn = document.getElementById('ai-generate-btn');
+    const loadingEl = document.getElementById('ai-loading');
+    const errorEl = document.getElementById('ai-error');
+    const gallery = document.getElementById('ai-generated-gallery');
+    const sizeSelect = document.getElementById('ai-image-size');
+    const qualitySelect = document.getElementById('ai-image-quality');
+
+    if (!generateBtn) return;
+
+    let selectedPresetId = null;
+
+    // --- Screenshot upload within AI panel ---
+    const ssZone = document.getElementById('ai-screenshot-zone');
+    const ssInput = document.getElementById('ai-screenshot-input');
+    const ssPreview = document.getElementById('ai-screenshot-preview');
+    const ssPlaceholder = document.getElementById('ai-screenshot-placeholder');
+    const ssRemove = document.getElementById('ai-screenshot-remove');
+
+    if (ssZone && ssInput) {
+      ssZone.addEventListener('click', (e) => {
+        if (e.target === ssRemove) return;
+        ssInput.click();
+      });
+      ssZone.addEventListener('dragover', (e) => { e.preventDefault(); ssZone.classList.add('drag-over'); });
+      ssZone.addEventListener('dragleave', () => ssZone.classList.remove('drag-over'));
+      ssZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        ssZone.classList.remove('drag-over');
+        const file = e.dataTransfer.files[0];
+        if (file && file.type.startsWith('image/')) loadAIScreenshot(file);
+      });
+      ssInput.addEventListener('change', () => {
+        if (ssInput.files[0]) loadAIScreenshot(ssInput.files[0]);
+      });
+      if (ssRemove) {
+        ssRemove.addEventListener('click', (e) => {
+          e.stopPropagation();
+          state.screenshot = null;
+          ssPreview.src = '';
+          ssPreview.classList.add('hidden');
+          ssRemove.classList.add('hidden');
+          ssPlaceholder.classList.remove('hidden');
+          ssZone.classList.remove('has-image');
+          ssInput.value = '';
+          // Also clear the main upload panel preview
+          const mainPreview = document.getElementById('social-upload-preview');
+          const mainPlaceholder = document.getElementById('social-upload-placeholder');
+          const mainRemove = document.getElementById('social-upload-remove');
+          const mainZone = document.getElementById('social-upload-zone');
+          if (mainPreview) { mainPreview.src = ''; mainPreview.classList.add('hidden'); }
+          if (mainRemove) mainRemove.classList.add('hidden');
+          if (mainPlaceholder) mainPlaceholder.classList.remove('hidden');
+          if (mainZone) mainZone.classList.remove('has-image');
+          requestRender();
+        });
+      }
+    }
+
+    function loadAIScreenshot(file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          state.screenshot = img;
+          if (ssPreview) { ssPreview.src = e.target.result; ssPreview.classList.remove('hidden'); }
+          if (ssRemove) ssRemove.classList.remove('hidden');
+          if (ssPlaceholder) ssPlaceholder.classList.add('hidden');
+          if (ssZone) ssZone.classList.add('has-image');
+          // Sync with main upload panel
+          const mainPreview = document.getElementById('social-upload-preview');
+          const mainPlaceholder = document.getElementById('social-upload-placeholder');
+          const mainRemove = document.getElementById('social-upload-remove');
+          const mainZone = document.getElementById('social-upload-zone');
+          if (mainPreview) { mainPreview.src = e.target.result; mainPreview.classList.remove('hidden'); }
+          if (mainRemove) mainRemove.classList.remove('hidden');
+          if (mainPlaceholder) mainPlaceholder.classList.add('hidden');
+          if (mainZone) mainZone.classList.add('has-image');
+          requestRender();
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // --- Provider selector ---
+    if (providerSelect) {
+      providerSelect.value = AIGenerator.getProvider();
+      updateProviderUI(providerSelect.value);
+      providerSelect.addEventListener('change', () => {
+        AIGenerator.saveProvider(providerSelect.value);
+        updateProviderUI(providerSelect.value);
+      });
+    }
+
+    function updateProviderUI(provider) {
+      if (openaiKeyGroup) openaiKeyGroup.classList.toggle('hidden', provider !== 'openai');
+      if (kimiKeyGroup) kimiKeyGroup.classList.toggle('hidden', provider !== 'kimi');
+    }
+
+    // Load saved API keys
+    if (apiKeyInput) {
+      apiKeyInput.value = AIGenerator.getApiKey();
+      apiKeyInput.addEventListener('change', () => {
+        AIGenerator.saveApiKey(apiKeyInput.value.trim());
+      });
+    }
+    if (kimiKeyInput) {
+      kimiKeyInput.value = AIGenerator.getKimiApiKey();
+      kimiKeyInput.addEventListener('change', () => {
+        AIGenerator.saveKimiApiKey(kimiKeyInput.value.trim());
+      });
+    }
+
+    // Toggle API key panel
+    if (settingsToggle && keyPanel) {
+      settingsToggle.addEventListener('click', () => {
+        keyPanel.classList.toggle('hidden');
+      });
+      // Auto-show if no key saved for current provider
+      const prov = AIGenerator.getProvider();
+      if ((prov === 'openai' && !AIGenerator.getApiKey()) || (prov === 'kimi' && !AIGenerator.getKimiApiKey())) {
+        keyPanel.classList.remove('hidden');
+      }
+    }
+
+    // Render style preset grid
+    if (styleGrid) {
+      styleGrid.innerHTML = '';
+      for (const preset of AIGenerator.STYLE_PRESETS) {
+        const item = document.createElement('button');
+        item.className = 'ai-style-item';
+        item.dataset.presetId = preset.id;
+        item.innerHTML = `<span class="ai-style-icon">${preset.icon}</span><span class="ai-style-label">${preset.label}</span>`;
+        item.addEventListener('click', () => {
+          styleGrid.querySelectorAll('.ai-style-item').forEach(el => el.classList.remove('active'));
+          item.classList.add('active');
+          selectedPresetId = preset.id;
+          // Pre-fill prompt
+          if (promptInput) promptInput.value = preset.prompt;
+        });
+        styleGrid.appendChild(item);
+      }
+    }
+
+    // Generate button
+    generateBtn.addEventListener('click', async () => {
+      const provider = providerSelect ? providerSelect.value : 'openai';
+      const apiKey = provider === 'kimi'
+        ? (kimiKeyInput ? kimiKeyInput.value.trim() : AIGenerator.getKimiApiKey())
+        : (apiKeyInput ? apiKeyInput.value.trim() : AIGenerator.getApiKey());
+      const prompt = promptInput ? promptInput.value.trim() : '';
+
+      if (!apiKey) {
+        showAIError(`Please enter your ${provider === 'kimi' ? 'Kimi' : 'OpenAI'} API key in the settings.`);
+        if (keyPanel) keyPanel.classList.remove('hidden');
+        return;
+      }
+      if (!prompt) {
+        showAIError('Please select a style preset or enter a custom prompt.');
+        return;
+      }
+
+      // Save keys
+      if (provider === 'kimi') {
+        AIGenerator.saveKimiApiKey(apiKey);
+      } else {
+        AIGenerator.saveApiKey(apiKey);
+      }
+
+      // Show loading
+      generateBtn.disabled = true;
+      if (loadingEl) loadingEl.classList.remove('hidden');
+      if (errorEl) errorEl.classList.add('hidden');
+
+      try {
+        const dataUrl = await AIGenerator.generate({
+          prompt: prompt,
+          apiKey: apiKey,
+          provider: provider,
+          size: sizeSelect ? sizeSelect.value : '1024x1024',
+          quality: qualitySelect ? qualitySelect.value : 'standard',
+        });
+
+        // Load as Image element
+        const img = await AIGenerator.loadImageFromDataUrl(dataUrl);
+
+        // Add to gallery
+        addToAIGallery(img, dataUrl, prompt);
+
+        // Auto-apply as background
+        state.background.type = 'ai-generated';
+        state.background.customImage = img;
+        state.background.gradientId = null;
+        enterAIMode();
+        requestRender();
+      } catch (err) {
+        showAIError(err.message);
+      } finally {
+        generateBtn.disabled = false;
+        if (loadingEl) loadingEl.classList.add('hidden');
+      }
+    });
+
+    function showAIError(msg) {
+      if (errorEl) {
+        errorEl.textContent = msg;
+        errorEl.classList.remove('hidden');
+        setTimeout(() => errorEl.classList.add('hidden'), 8000);
+      }
+    }
+
+    function addToAIGallery(img, dataUrl, prompt) {
+      if (!gallery) return;
+
+      const item = document.createElement('div');
+      item.className = 'ai-gallery-item';
+
+      const thumb = document.createElement('img');
+      thumb.src = dataUrl;
+      thumb.alt = prompt.slice(0, 50);
+
+      const useBtn = document.createElement('button');
+      useBtn.className = 'ai-gallery-use';
+      useBtn.textContent = 'Use';
+      useBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        state.background.type = 'ai-generated';
+        state.background.customImage = img;
+        state.background.gradientId = null;
+        enterAIMode();
+        requestRender();
+        gallery.querySelectorAll('.ai-gallery-item').forEach(el => el.classList.remove('active'));
+        item.classList.add('active');
+      });
+
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'ai-gallery-remove';
+      removeBtn.textContent = '×';
+      removeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        item.remove();
+      });
+
+      item.appendChild(thumb);
+      item.appendChild(useBtn);
+      item.appendChild(removeBtn);
+      gallery.insertBefore(item, gallery.firstChild);
+
+      // Mark as active
+      gallery.querySelectorAll('.ai-gallery-item').forEach(el => el.classList.remove('active'));
+      item.classList.add('active');
+    }
+  }
+
   function renderPatternGrid() {
     const container = document.getElementById('social-pattern-grid');
     if (!container) return;
@@ -593,16 +1335,23 @@
     const grid = document.createElement('div');
     grid.className = 'social-bg-grid';
 
+    const colors = ensurePatternColors();
+    const accent = colors[0];
+
     for (const pattern of BackgroundLibrary.PATTERNS) {
       const item = document.createElement('div');
       item.className = 'social-bg-item social-bg-pattern-item';
       item.title = pattern.name;
+      item.dataset.patternId = pattern.id;
+      if (state.background.type === 'pattern' && state.background.patternId === pattern.id) {
+        item.classList.add('active');
+      }
 
       // Generate thumbnail
       const thumbCanvas = document.createElement('canvas');
       thumbCanvas.width = 100;
       thumbCanvas.height = 100;
-      pattern.generate(thumbCanvas.getContext('2d'), 100, 100);
+      pattern.generate(thumbCanvas.getContext('2d'), 100, 100, accent);
       item.style.backgroundImage = `url(${thumbCanvas.toDataURL()})`;
       item.style.backgroundSize = 'cover';
 
@@ -611,9 +1360,7 @@
         state.background.patternId = pattern.id;
         state.background.gradientId = null;
 
-        container.querySelectorAll('.social-bg-item').forEach(el => el.classList.remove('active'));
-        item.classList.add('active');
-
+        updateBackgroundUI();
         requestRender();
       });
 
@@ -621,6 +1368,110 @@
     }
 
     container.appendChild(grid);
+  }
+
+  function setupPatternColorControls() {
+    for (let i = 1; i <= 3; i++) {
+      const picker = document.getElementById(`social-pattern-color-${i}`);
+      const hex = document.getElementById(`social-pattern-color-${i}-hex`);
+      if (!picker || !hex) continue;
+
+      picker.addEventListener('input', () => {
+        const colors = ensurePatternColors();
+        colors[i - 1] = picker.value;
+        hex.value = picker.value.toUpperCase();
+        renderPatternGrid();
+        requestRender();
+      });
+
+      hex.addEventListener('change', () => {
+        const normalized = normalizeHexColor(hex.value);
+        if (!normalized) return;
+        const colors = ensurePatternColors();
+        colors[i - 1] = normalized;
+        picker.value = normalized;
+        hex.value = normalized.toUpperCase();
+        renderPatternGrid();
+        requestRender();
+      });
+    }
+  }
+
+  function ensurePatternColors() {
+    if (!Array.isArray(state.background.patternColors)) {
+      state.background.patternColors = ['#8D7EDB', '#C5B8F0', '#ECE5FF'];
+      return state.background.patternColors;
+    }
+    while (state.background.patternColors.length < 3) {
+      state.background.patternColors.push('#ECE5FF');
+    }
+    return state.background.patternColors;
+  }
+
+  function syncPatternColorInputs() {
+    const colors = ensurePatternColors();
+    for (let i = 1; i <= 3; i++) {
+      const picker = document.getElementById(`social-pattern-color-${i}`);
+      const hex = document.getElementById(`social-pattern-color-${i}-hex`);
+      if (!picker || !hex) continue;
+      picker.value = colors[i - 1];
+      hex.value = colors[i - 1].toUpperCase();
+    }
+  }
+
+  function setupPatternToneControls() {
+    const intensity = document.getElementById('social-pattern-intensity');
+    const grain = document.getElementById('social-pattern-grain');
+
+    if (intensity) {
+      intensity.addEventListener('input', () => {
+        ensurePatternTuning();
+        state.background.patternIntensity = parseInt(intensity.value, 10);
+        const value = document.getElementById('social-pattern-intensity-value');
+        if (value) value.textContent = `${state.background.patternIntensity}%`;
+        requestRender();
+      });
+    }
+
+    if (grain) {
+      grain.addEventListener('input', () => {
+        ensurePatternTuning();
+        state.background.patternGrain = parseInt(grain.value, 10);
+        const value = document.getElementById('social-pattern-grain-value');
+        if (value) value.textContent = `${state.background.patternGrain}%`;
+        requestRender();
+      });
+    }
+  }
+
+  function ensurePatternTuning() {
+    const intensity = Number(state.background.patternIntensity);
+    const grain = Number(state.background.patternGrain);
+
+    state.background.patternIntensity = Number.isFinite(intensity) ? Math.max(0, Math.min(100, Math.round(intensity))) : 72;
+    state.background.patternGrain = Number.isFinite(grain) ? Math.max(0, Math.min(100, Math.round(grain))) : 0;
+  }
+
+  function syncPatternToneInputs() {
+    ensurePatternTuning();
+
+    const intensity = document.getElementById('social-pattern-intensity');
+    const intensityValue = document.getElementById('social-pattern-intensity-value');
+    const grain = document.getElementById('social-pattern-grain');
+    const grainValue = document.getElementById('social-pattern-grain-value');
+
+    if (intensity) intensity.value = state.background.patternIntensity;
+    if (intensityValue) intensityValue.textContent = `${state.background.patternIntensity}%`;
+    if (grain) grain.value = state.background.patternGrain;
+    if (grainValue) grainValue.textContent = `${state.background.patternGrain}%`;
+  }
+
+  function normalizeHexColor(value) {
+    if (!value) return null;
+    let normalized = value.trim();
+    if (!normalized.startsWith('#')) normalized = '#' + normalized;
+    if (!/^#[0-9a-fA-F]{6}$/.test(normalized)) return null;
+    return normalized.toUpperCase();
   }
 
   function renderSolidColorGrid() {
@@ -773,7 +1624,14 @@
   }
 
   function updateBackgroundUI() {
-    // Could expand this to highlight the active background item
+    syncPatternColorInputs();
+    syncPatternToneInputs();
+
+    const patternItems = document.querySelectorAll('.social-bg-pattern-item');
+    patternItems.forEach(el => {
+      const isActive = state.background.type === 'pattern' && el.dataset.patternId === state.background.patternId;
+      el.classList.toggle('active', isActive);
+    });
   }
 
   // ==================== LAYOUT PANEL ====================

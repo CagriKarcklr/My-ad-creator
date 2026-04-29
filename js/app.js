@@ -353,6 +353,18 @@
     { name: 'Sky', colors: ['#89f7fe', '#66a6ff'], angle: 180 },
     { name: 'Rose', colors: ['#eecda3', '#ef629f'], angle: 135 },
     { name: 'Midnight', colors: ['#232526', '#414345'], angle: 180 },
+    { name: 'Aurora', colors: ['#56CCF2', '#2F80ED', '#6FCF97'], angle: 145 },
+    { name: 'Cherry Soda', colors: ['#ff4e50', '#f9d423'], angle: 135 },
+    { name: 'Indigo Dust', colors: ['#3f2b96', '#a8c0ff'], angle: 160 },
+    { name: 'Sea Glass', colors: ['#7de2d1', '#b8f2e6', '#faf3dd'], angle: 170 },
+    { name: 'Saffron Glow', colors: ['#f7971e', '#ffd200', '#ffecd2'], angle: 135 },
+    { name: 'Graphite', colors: ['#0f2027', '#203a43', '#2c5364'], angle: 180 },
+    { name: 'Blueberry Milk', colors: ['#8ec5fc', '#e0c3fc', '#fef9d7'], angle: 150 },
+    { name: 'Neon Tide', colors: ['#00c6ff', '#0072ff', '#9b23ea'], angle: 140 },
+    { name: 'Copper Rose', colors: ['#b76e79', '#d8a39d', '#f7d9c4'], angle: 160 },
+    { name: 'Emerald Night', colors: ['#0f5132', '#198754', '#74c69d'], angle: 155 },
+    { name: 'Frosted Lilac', colors: ['#d6cff0', '#e9d8fd', '#f7f7ff'], angle: 180 },
+    { name: 'Tangerine Pop', colors: ['#ff7e5f', '#feb47b', '#ffe29f'], angle: 135 },
   ];
 
   // ==================== APPLICATION STATE ====================
@@ -372,6 +384,10 @@
         stops: [0, 0.5, 1],
         angle: 180,
         color: '#1a1a2e',
+        patternId: 'pat-ribbon-layers',
+        patternColors: ['#8D7EDB', '#C5B8F0', '#ECE5FF'],
+        patternIntensity: 72,
+        patternGrain: 0,
         meshColors: ['#667eea', '#764ba2', '#f093fb', '#4facfe'],
         meshComplexity: 5,
       },
@@ -386,6 +402,7 @@
       phone2Rotation: 5,
       phone2Perspective: '',
       phoneFrameColor: '#1C1C1E',
+      frameType: 'iphone',
       phoneShadow: true,
       shadowIntensity: 40,
       shadowBlur: 60,
@@ -443,9 +460,14 @@
   const canvas = document.getElementById('main-canvas');
   const canvasWrapper = document.getElementById('canvas-wrapper');
 
+  const SNAP_THRESHOLD_PX = 12;
+  let canvasDragState = null;
+  let dragGuideLines = [];
+
   // ==================== INITIALIZATION ====================
   function init() {
     setupCanvas();
+    setupCanvasDrag();
     setupUploadZones();
     setupLayoutGrid();
     setupTextPanel();
@@ -480,7 +502,417 @@
     requestAnimationFrame(() => {
       renderPending = false;
       Renderer.render(canvas, state);
+      drawDragGuides();
     });
+  }
+
+  function setupCanvasDrag() {
+    if (!canvas) return;
+    canvas.classList.add('canvas-draggable');
+    canvas.addEventListener('pointerdown', onCanvasPointerDown);
+    canvas.addEventListener('pointermove', onCanvasPointerMove);
+    canvas.addEventListener('pointerup', onCanvasPointerUp);
+    canvas.addEventListener('pointercancel', onCanvasPointerUp);
+    canvas.addEventListener('pointerleave', () => {
+      if (!canvasDragState) canvas.style.cursor = 'default';
+    });
+  }
+
+  function onCanvasPointerDown(e) {
+    const point = toCanvasPoint(e);
+    const hit = getTopmostHit(point.x, point.y);
+    if (!hit) {
+      updateCanvasCursor(point);
+      return;
+    }
+
+    canvasDragState = {
+      pointerId: e.pointerId,
+      itemId: hit.id,
+      itemType: hit.type,
+      grabDx: point.x - hit.cx,
+      grabDy: point.y - hit.cy,
+    };
+
+    dragGuideLines = [];
+    canvas.classList.add('is-dragging');
+    canvas.style.cursor = 'grabbing';
+    if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }
+
+  function onCanvasPointerMove(e) {
+    const point = toCanvasPoint(e);
+
+    if (!canvasDragState || canvasDragState.pointerId !== e.pointerId) {
+      updateCanvasCursor(point);
+      return;
+    }
+
+    const nextCx = point.x - canvasDragState.grabDx;
+    const nextCy = point.y - canvasDragState.grabDy;
+    const didMove = applyDraggedPosition(canvasDragState.itemId, nextCx, nextCy);
+    if (didMove) requestRender();
+    e.preventDefault();
+  }
+
+  function onCanvasPointerUp(e) {
+    if (!canvasDragState || canvasDragState.pointerId !== e.pointerId) return;
+
+    const draggedType = canvasDragState.itemType;
+
+    if (canvas.releasePointerCapture && canvas.hasPointerCapture && canvas.hasPointerCapture(e.pointerId)) {
+      canvas.releasePointerCapture(e.pointerId);
+    }
+
+    canvasDragState = null;
+    dragGuideLines = [];
+    canvas.classList.remove('is-dragging');
+    updateCanvasCursor(toCanvasPoint(e));
+
+    if (draggedType === 'text') updateTextUI();
+    requestRender();
+  }
+
+  function toCanvasPoint(e) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
+    };
+  }
+
+  function updateCanvasCursor(point) {
+    if (canvasDragState) {
+      canvas.style.cursor = 'grabbing';
+      return;
+    }
+    if (!point) {
+      canvas.style.cursor = 'default';
+      return;
+    }
+    const hit = getTopmostHit(point.x, point.y);
+    canvas.style.cursor = hit ? 'grab' : 'default';
+  }
+
+  function getTopmostHit(x, y) {
+    const items = getDraggableItems();
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i];
+      if (x >= item.left && x <= item.right && y >= item.top && y <= item.bottom) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  function getDraggableItems() {
+    const items = [];
+    const W = canvas.width;
+    const H = canvas.height;
+
+    if (state.currentLayout && Array.isArray(state.currentLayout.phones)) {
+      for (let i = 0; i < state.currentLayout.phones.length; i++) {
+        const isPrimary = i === 0;
+        const phoneScale = isPrimary ? state.phoneScale : state.phone2Scale;
+        const phoneX = isPrimary ? state.phoneX : state.phone2X;
+        const phoneY = isPrimary ? state.phoneY : state.phone2Y;
+        const frameType = state.frameType || 'iphone';
+        const phoneAspect = Renderer.getPhoneAspectRatio
+          ? Renderer.getPhoneAspectRatio(frameType)
+          : Renderer.PHONE_W_TO_H;
+
+        const w = W * (phoneScale / 100);
+        const h = w / phoneAspect;
+        const cx = W * (phoneX / 100);
+        const cy = H * (phoneY / 100);
+
+        items.push({
+          id: isPrimary ? 'phone-1' : 'phone-2',
+          type: 'phone',
+          index: i,
+          cx,
+          cy,
+          w,
+          h,
+          left: cx - w / 2,
+          right: cx + w / 2,
+          top: cy - h / 2,
+          bottom: cy + h / 2,
+        });
+      }
+    }
+
+    for (const text of state.texts) {
+      const bounds = measureTextBounds(text, W, H);
+      if (!bounds) continue;
+      items.push({
+        id: `text-${text.id}`,
+        type: 'text',
+        textId: text.id,
+        ...bounds,
+      });
+    }
+
+    if (state.logo) {
+      const img = state.logo;
+      const imgW = img.naturalWidth || img.width;
+      const imgH = img.naturalHeight || img.height;
+      if (imgW > 0 && imgH > 0) {
+        const ratio = imgW / imgH;
+        const w = W * ((state.logoScale || 15) / 100);
+        const h = w / ratio;
+        const cx = W * (state.logoX / 100);
+        const cy = H * (state.logoY / 100);
+        items.push({
+          id: 'logo',
+          type: 'logo',
+          cx,
+          cy,
+          w,
+          h,
+          left: cx - w / 2,
+          right: cx + w / 2,
+          top: cy - h / 2,
+          bottom: cy + h / 2,
+        });
+      }
+    }
+
+    return items;
+  }
+
+  function measureTextBounds(text, canvasW, canvasH) {
+    if (!text.content || text.content.trim() === '') return null;
+
+    const ctx = canvas.getContext('2d');
+    const fontSize = text.size || 72;
+    const fontWeight = text.weight || 700;
+    const fontFamily = text.font || 'Inter';
+    const align = text.align || 'center';
+    const lineHeight = text.lineHeight || 1.15;
+    const maxWidth = (text.maxWidth / 100) * canvasW || canvasW * 0.85;
+    const letterSpacing = text.letterSpacing || 0;
+    const posX = (text.x / 100) * canvasW;
+    const posY = (text.y / 100) * canvasH;
+
+    ctx.save();
+    ctx.font = `${fontWeight} ${fontSize}px "${fontFamily}", "SF Pro Display", -apple-system, system-ui, sans-serif`;
+
+    const paragraphs = text.content.split('\n');
+    const lines = [];
+    for (const paragraph of paragraphs) {
+      const wrapped = wrapTextForBounds(ctx, paragraph, maxWidth);
+      for (const line of wrapped) lines.push(line);
+    }
+    if (lines.length === 0) lines.push('');
+
+    let minX = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let currentY = posY;
+    for (const line of lines) {
+      const lineWidth = measureLineWidth(ctx, line, letterSpacing);
+      let startX = posX;
+      if (align === 'center') startX = posX - lineWidth / 2;
+      else if (align === 'right') startX = posX - lineWidth;
+      minX = Math.min(minX, startX);
+      maxX = Math.max(maxX, startX + lineWidth);
+      currentY += fontSize * lineHeight;
+    }
+
+    ctx.restore();
+
+    const width = Math.max(1, maxX - minX);
+    const height = Math.max(1, currentY - posY);
+    const cx = minX + width / 2;
+    const cy = posY + height / 2;
+
+    return {
+      cx,
+      cy,
+      w: width,
+      h: height,
+      left: minX,
+      right: minX + width,
+      top: posY,
+      bottom: posY + height,
+    };
+  }
+
+  function wrapTextForBounds(ctx, text, maxWidth) {
+    if (!text) return [''];
+    const words = text.split(' ');
+    const lines = [];
+    let currentLine = '';
+
+    for (const word of words) {
+      const testLine = currentLine ? `${currentLine} ${word}` : word;
+      if (ctx.measureText(testLine).width > maxWidth && currentLine) {
+        lines.push(currentLine);
+        currentLine = word;
+      } else {
+        currentLine = testLine;
+      }
+    }
+
+    if (currentLine) lines.push(currentLine);
+    if (lines.length === 0) lines.push('');
+    return lines;
+  }
+
+  function measureLineWidth(ctx, text, spacing) {
+    if (!text) return 0;
+    if (!spacing) return ctx.measureText(text).width;
+
+    let width = 0;
+    for (let i = 0; i < text.length; i++) {
+      width += ctx.measureText(text[i]).width;
+      if (i < text.length - 1) width += spacing;
+    }
+    return width;
+  }
+
+  function applyDraggedPosition(itemId, proposedCx, proposedCy) {
+    const items = getDraggableItems();
+    const activeItem = items.find((item) => item.id === itemId);
+    if (!activeItem) return false;
+
+    const others = items.filter((item) => item.id !== itemId);
+    const snapped = snapToGuides(activeItem, proposedCx, proposedCy, others, canvas.width, canvas.height);
+    let xPct = (snapped.cx / canvas.width) * 100;
+    let yPct = (snapped.cy / canvas.height) * 100;
+
+    if (activeItem.type === 'phone') {
+      if (activeItem.index === 0) {
+        const [minX, maxX] = getSliderBounds('phone-x', 0, 100);
+        const [minY, maxY] = getSliderBounds('phone-y', 0, 100);
+        state.phoneX = roundToStep(clamp(xPct, minX, maxX), 0.1);
+        state.phoneY = roundToStep(clamp(yPct, minY, maxY), 0.1);
+      } else {
+        const [minX, maxX] = getSliderBounds('phone2-x', 0, 100);
+        const [minY, maxY] = getSliderBounds('phone2-y', 0, 100);
+        state.phone2X = roundToStep(clamp(xPct, minX, maxX), 0.1);
+        state.phone2Y = roundToStep(clamp(yPct, minY, maxY), 0.1);
+      }
+      syncDraggedControls('phone', activeItem.index);
+    } else if (activeItem.type === 'text') {
+      const target = state.texts.find((text) => `text-${text.id}` === itemId);
+      if (target) {
+        target.x = roundToStep(clamp(xPct, 5, 95), 0.1);
+        target.y = roundToStep(clamp(yPct, 0, 90), 0.1);
+      }
+    } else if (activeItem.type === 'logo') {
+      const [minX, maxX] = getSliderBounds('logo-x', 0, 100);
+      const [minY, maxY] = getSliderBounds('logo-y', 0, 100);
+      state.logoX = roundToStep(clamp(xPct, minX, maxX), 0.1);
+      state.logoY = roundToStep(clamp(yPct, minY, maxY), 0.1);
+      syncDraggedControls('logo');
+    }
+
+    dragGuideLines = snapped.guides;
+    return true;
+  }
+
+  function snapToGuides(activeItem, cx, cy, otherItems, W, H) {
+    const xCandidates = [W / 2];
+    const yCandidates = [H / 2];
+    for (const item of otherItems) {
+      xCandidates.push(item.left, item.cx, item.right);
+      yCandidates.push(item.top, item.cy, item.bottom);
+    }
+
+    const xPoints = [cx - activeItem.w / 2, cx, cx + activeItem.w / 2];
+    const yPoints = [cy - activeItem.h / 2, cy, cy + activeItem.h / 2];
+
+    const bestX = findBestSnap(xPoints, xCandidates);
+    if (bestX) cx += bestX.delta;
+    const bestY = findBestSnap(yPoints, yCandidates);
+    if (bestY) cy += bestY.delta;
+
+    const guides = [];
+    if (bestX) guides.push({ axis: 'x', value: bestX.line });
+    if (bestY) guides.push({ axis: 'y', value: bestY.line });
+
+    return { cx, cy, guides };
+  }
+
+  function findBestSnap(points, guideLines) {
+    let best = null;
+    for (const point of points) {
+      for (const line of guideLines) {
+        const delta = line - point;
+        const dist = Math.abs(delta);
+        if (dist > SNAP_THRESHOLD_PX) continue;
+        if (!best || dist < best.dist) {
+          best = { delta, line, dist };
+        }
+      }
+    }
+    return best;
+  }
+
+  function getSliderBounds(id, fallbackMin, fallbackMax) {
+    const slider = document.getElementById(id);
+    if (!slider) return [fallbackMin, fallbackMax];
+    const min = Number.isFinite(parseFloat(slider.min)) ? parseFloat(slider.min) : fallbackMin;
+    const max = Number.isFinite(parseFloat(slider.max)) ? parseFloat(slider.max) : fallbackMax;
+    return [min, max];
+  }
+
+  function syncDraggedControls(type, index = 0) {
+    if (type === 'phone' && index === 0) {
+      setSliderValue('phone-x', state.phoneX, `${state.phoneX}%`);
+      setSliderValue('phone-y', state.phoneY, `${state.phoneY}%`);
+      return;
+    }
+    if (type === 'phone' && index === 1) {
+      setSliderValue('phone2-x', state.phone2X, `${state.phone2X}%`);
+      setSliderValue('phone2-y', state.phone2Y, `${state.phone2Y}%`);
+      return;
+    }
+    if (type === 'logo') {
+      setSliderValue('logo-x', state.logoX, `${state.logoX}%`);
+      setSliderValue('logo-y', state.logoY, `${state.logoY}%`);
+    }
+  }
+
+  function drawDragGuides() {
+    if (!dragGuideLines || dragGuideLines.length === 0) return;
+
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(125, 211, 252, 0.95)';
+    ctx.lineWidth = Math.max(1, Math.round(Math.min(W, H) * 0.0016));
+    ctx.setLineDash([10, 6]);
+
+    for (const guide of dragGuideLines) {
+      if (guide.axis === 'x') {
+        ctx.beginPath();
+        ctx.moveTo(guide.value, 0);
+        ctx.lineTo(guide.value, H);
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(0, guide.value);
+        ctx.lineTo(W, guide.value);
+        ctx.stroke();
+      }
+    }
+
+    ctx.restore();
+  }
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function roundToStep(value, step) {
+    return Math.round(value / step) * step;
   }
 
   // ==================== UPLOAD ZONES ====================
@@ -1100,6 +1532,11 @@
     // Gradient presets
     renderGradientPresets();
     renderGradientStops();
+    renderPatternPresets();
+    bindPatternColorInputs();
+    syncPatternColorInputs();
+    bindPatternToneInputs();
+    syncPatternToneInputs();
 
     // Gradient angle slider
     bindSlider('gradient-angle', (val) => {
@@ -1147,20 +1584,26 @@
       document.getElementById('mesh-complexity-value').textContent = val;
       requestRender();
     });
+
+    syncBgTypeVisibility(state.background.type);
   }
 
   function activateBgType(type) {
     state.background.type = type;
+    syncBgTypeVisibility(type);
 
+    requestRender();
+  }
+
+  function syncBgTypeVisibility(type) {
     document.querySelectorAll('.bg-type-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.bgType === type);
     });
 
     document.getElementById('bg-gradient-controls').classList.toggle('hidden', type !== 'gradient');
     document.getElementById('bg-solid-controls').classList.toggle('hidden', type !== 'solid');
+    document.getElementById('bg-pattern-controls').classList.toggle('hidden', type !== 'pattern');
     document.getElementById('bg-mesh-controls').classList.toggle('hidden', type !== 'mesh');
-
-    requestRender();
   }
 
   function renderGradientPresets() {
@@ -1242,9 +1685,173 @@
     }
   }
 
+  function renderPatternPresets() {
+    const container = document.getElementById('pattern-presets');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const patterns = window.BackgroundLibrary && window.BackgroundLibrary.PATTERNS;
+    if (!patterns || patterns.length === 0) return;
+
+    ensurePatternColors();
+    const accent = state.background.patternColors[0];
+
+    for (const pattern of patterns) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = `pattern-preset-item${state.background.patternId === pattern.id ? ' active' : ''}`;
+      item.dataset.patternId = pattern.id;
+      item.title = pattern.name;
+
+      const thumbCanvas = document.createElement('canvas');
+      thumbCanvas.width = 120;
+      thumbCanvas.height = 120;
+      const tctx = thumbCanvas.getContext('2d');
+      try {
+        pattern.generate(tctx, 120, 120, accent);
+      } catch (_) {
+        tctx.fillStyle = '#D8D8E8';
+        tctx.fillRect(0, 0, 120, 120);
+      }
+      item.style.backgroundImage = `url(${thumbCanvas.toDataURL()})`;
+
+      item.addEventListener('click', () => {
+        state.background.patternId = pattern.id;
+        activateBgType('pattern');
+        updateBackgroundUI();
+      });
+
+      container.appendChild(item);
+    }
+  }
+
+  function bindPatternColorInputs() {
+    for (let i = 1; i <= 3; i++) {
+      const picker = document.getElementById(`pattern-color-${i}`);
+      const hex = document.getElementById(`pattern-color-${i}-hex`);
+      if (!picker || !hex) continue;
+
+      picker.addEventListener('input', () => {
+        ensurePatternColors();
+        state.background.patternColors[i - 1] = picker.value;
+        hex.value = picker.value.toUpperCase();
+        renderPatternPresets();
+        requestRender();
+      });
+
+      hex.addEventListener('change', () => {
+        const normalized = normalizeHexColor(hex.value);
+        if (!normalized) return;
+        ensurePatternColors();
+        state.background.patternColors[i - 1] = normalized;
+        picker.value = normalized;
+        hex.value = normalized.toUpperCase();
+        renderPatternPresets();
+        requestRender();
+      });
+    }
+  }
+
+  function ensurePatternColors() {
+    if (!Array.isArray(state.background.patternColors)) {
+      state.background.patternColors = ['#8D7EDB', '#C5B8F0', '#ECE5FF'];
+      return;
+    }
+
+    while (state.background.patternColors.length < 3) {
+      state.background.patternColors.push('#ECE5FF');
+    }
+  }
+
+  function syncPatternColorInputs() {
+    ensurePatternColors();
+    for (let i = 1; i <= 3; i++) {
+      const picker = document.getElementById(`pattern-color-${i}`);
+      const hex = document.getElementById(`pattern-color-${i}-hex`);
+      if (!picker || !hex) continue;
+      picker.value = state.background.patternColors[i - 1];
+      hex.value = state.background.patternColors[i - 1].toUpperCase();
+    }
+  }
+
+  function bindPatternToneInputs() {
+    const intensity = document.getElementById('pattern-intensity');
+    const grain = document.getElementById('pattern-grain');
+
+    if (intensity) {
+      intensity.addEventListener('input', () => {
+        ensurePatternTuning();
+        state.background.patternIntensity = parseInt(intensity.value, 10);
+        const value = document.getElementById('pattern-intensity-value');
+        if (value) value.textContent = `${state.background.patternIntensity}%`;
+        requestRender();
+      });
+    }
+
+    if (grain) {
+      grain.addEventListener('input', () => {
+        ensurePatternTuning();
+        state.background.patternGrain = parseInt(grain.value, 10);
+        const value = document.getElementById('pattern-grain-value');
+        if (value) value.textContent = `${state.background.patternGrain}%`;
+        requestRender();
+      });
+    }
+  }
+
+  function ensurePatternTuning() {
+    const intensity = Number(state.background.patternIntensity);
+    const grain = Number(state.background.patternGrain);
+
+    state.background.patternIntensity = Number.isFinite(intensity) ? Math.max(0, Math.min(100, Math.round(intensity))) : 72;
+    state.background.patternGrain = Number.isFinite(grain) ? Math.max(0, Math.min(100, Math.round(grain))) : 0;
+  }
+
+  function syncPatternToneInputs() {
+    ensurePatternTuning();
+
+    const intensity = document.getElementById('pattern-intensity');
+    const intensityValue = document.getElementById('pattern-intensity-value');
+    const grain = document.getElementById('pattern-grain');
+    const grainValue = document.getElementById('pattern-grain-value');
+
+    if (intensity) intensity.value = state.background.patternIntensity;
+    if (intensityValue) intensityValue.textContent = `${state.background.patternIntensity}%`;
+    if (grain) grain.value = state.background.patternGrain;
+    if (grainValue) grainValue.textContent = `${state.background.patternGrain}%`;
+  }
+
+  function normalizeHexColor(value) {
+    if (!value) return null;
+    let normalized = value.trim();
+    if (!normalized.startsWith('#')) normalized = '#' + normalized;
+    if (!/^#[0-9a-fA-F]{6}$/.test(normalized)) return null;
+    return normalized.toUpperCase();
+  }
+
   function updateBackgroundUI() {
     renderGradientStops();
     setSliderValue('gradient-angle', state.background.angle, `${state.background.angle}°`);
+
+    const solidColor = document.getElementById('solid-color');
+    const solidHex = document.getElementById('solid-color-hex');
+    if (solidColor && solidHex) {
+      solidColor.value = state.background.color;
+      solidHex.value = state.background.color;
+    }
+
+    for (let i = 1; i <= 4; i++) {
+      const input = document.getElementById(`mesh-color-${i}`);
+      if (input && state.background.meshColors[i - 1]) {
+        input.value = state.background.meshColors[i - 1];
+      }
+    }
+    setSliderValue('mesh-complexity', state.background.meshComplexity, `${state.background.meshComplexity}`);
+
+    syncPatternColorInputs();
+    syncPatternToneInputs();
+    renderPatternPresets();
+    syncBgTypeVisibility(state.background.type);
   }
 
   // ==================== PHONE PANEL ====================
@@ -1291,6 +1898,16 @@
       state.phone2Rotation = val;
       document.getElementById('phone2-rotation-value').textContent = `${val}°`;
       requestRender();
+    });
+
+    // Frame type toggle (iPhone / Android)
+    document.querySelectorAll('.frame-type-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.frame-type-btn').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        state.frameType = btn.dataset.frameType;
+        requestRender();
+      });
     });
 
     // Shadow toggle
@@ -1355,6 +1972,16 @@
           appSection.classList.remove('hidden');
           appstoreOnlyEls.forEach(el => el.classList.remove('hidden'));
           if (window.SocialApp) SocialApp.deactivate();
+          // Switch frame type based on section
+          if (section === 'googleplay') {
+            state.frameType = 'android';
+          } else {
+            state.frameType = 'iphone';
+          }
+          // Sync the frame-type toggle buttons in the Phone tab
+          document.querySelectorAll('.frame-type-btn').forEach(b => {
+            b.classList.toggle('active', b.dataset.frameType === state.frameType);
+          });
           requestRender();
         }
       });
@@ -1473,7 +2100,7 @@
       state = createDefaultState();
       setupCanvas();
       renderTextLayers();
-      renderGradientStops();
+      updateBackgroundUI();
       updateLayoutSlidersUI();
       selectLayout('single-center');
 

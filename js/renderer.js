@@ -1,34 +1,62 @@
 /**
  * Renderer — Canvas rendering engine
- * Draws backgrounds, iPhone mockups, text layers, and effects
+ * Draws backgrounds, phone mockups, text layers, and effects
  */
 
 window.Renderer = (() => {
 
-  // iPhone frame image (1456×3000 PNG with transparent screen cutout)
-  const FRAME_IMG_W = 1456;
-  const FRAME_IMG_H = 3000;
+  // ── Frame configs ──────────────────────────────────────────────────────────
+  const FRAMES = {
+    iphone: {
+      imgW: 1456, imgH: 3000,
+      // Screen insets as fractions of frame image size
+      screenLeft:   55   / 1456,
+      screenTop:    44   / 3000,
+      screenRight:  55   / 1456,
+      screenBottom: 40   / 3000,
+      screenCornerRadius: 0.12,
+      src: 'Iphone-frame-upscaled.png',
+    },
+    android: {
+      imgW: 847, imgH: 1759,
+      // Android has very thin bezels; punch-hole camera sits inside the screen
+      screenLeft:   18   / 847,
+      screenTop:    18   / 1759,
+      screenRight:  18   / 847,
+      screenBottom: 22   / 1759,
+      screenCornerRadius: 0.11,
+      src: 'Android-frame.png',
+    },
+  };
+
+  // Legacy constants kept for backward-compat (default to iPhone)
+  const FRAME_IMG_W = FRAMES.iphone.imgW;
+  const FRAME_IMG_H = FRAMES.iphone.imgH;
   const PHONE_W_TO_H = FRAME_IMG_W / FRAME_IMG_H; // ≈ 0.4853
-
-  // Screen opening within the frame image (detected from transparent region)
-  // Slightly generous insets so content extends under frame edges — the frame
-  // image overlays on top and masks the bezels.
-  const SCREEN_LEFT   = 55  / FRAME_IMG_W;  // ≈ 0.038
-  const SCREEN_TOP    = 44  / FRAME_IMG_H;  // ≈ 0.015 (top of screen, above Dynamic Island)
-  const SCREEN_RIGHT  = 55  / FRAME_IMG_W;  // ≈ 0.038
-  const SCREEN_BOTTOM = 40  / FRAME_IMG_H;  // ≈ 0.013
-
-  // Inner screen corner radius as a fraction of phone width
-  const SCREEN_CORNER_RADIUS = 0.12;
 
   // Corner radius of the phone body (must match frame image corners)
   const CORNER_RADIUS_RATIO = 0.22;
 
-  // Pre-load the iPhone frame image
+  // Pre-load both frame images
+  const frameImages = {};
+  for (const [key, cfg] of Object.entries(FRAMES)) {
+    const img = new Image();
+    img.onload = () => { frameImages[key] = img; };
+    img.src = cfg.src;
+  }
+
+  // Keep legacy reference so existing code that checks frameImage still works
   let frameImage = null;
-  const frameImg = new Image();
-  frameImg.onload = () => { frameImage = frameImg; };
-  frameImg.src = 'Iphone-frame-upscaled.png';
+  const _legacyImg = new Image();
+  _legacyImg.onload = () => { frameImage = _legacyImg; frameImages.iphone = _legacyImg; };
+  _legacyImg.src = FRAMES.iphone.src;
+
+  const PATTERN_NOISE_TILE_CACHE = new Map();
+
+  function getPhoneAspectRatio(frameType = 'iphone') {
+    const cfg = FRAMES[frameType] || FRAMES.iphone;
+    return cfg.imgW / cfg.imgH;
+  }
 
   /**
    * Main render function — draws everything to the canvas
@@ -69,7 +97,9 @@ window.Renderer = (() => {
           perspective = state.phone2Perspective || phoneDef.perspective || '';
         }
 
-        const ph = pw / PHONE_W_TO_H;
+        const frameType = state.frameType || 'iphone';
+        const frameCfg = FRAMES[frameType] || FRAMES.iphone;
+        const ph = pw / (frameCfg.imgW / frameCfg.imgH);
 
         drawPhoneMockup(ctx, px, py, pw, ph, screenshot, {
           rotation: rotation,
@@ -80,6 +110,7 @@ window.Renderer = (() => {
           screenBrightness: state.screenBrightness,
           screenRadius: state.screenRadius,
           perspective: perspective,
+          frameType: frameType,
         });
       }
     }
@@ -122,6 +153,8 @@ window.Renderer = (() => {
 
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, W, H);
+    } else if (bg.type === 'pattern') {
+      drawPatternBackground(ctx, W, H, bg);
     } else if (bg.type === 'mesh') {
       drawMeshGradient(ctx, W, H, bg);
     }
@@ -167,6 +200,109 @@ window.Renderer = (() => {
 
     // Optional: add subtle noise overlay for texture
     // (skip for performance in real-time preview)
+  }
+
+  function drawPatternBackground(ctx, W, H, bg) {
+    const patterns = window.BackgroundLibrary && window.BackgroundLibrary.PATTERNS;
+    if (!patterns || patterns.length === 0) {
+      ctx.fillStyle = '#E8E8E8';
+      ctx.fillRect(0, 0, W, H);
+      return;
+    }
+
+    const colors = Array.isArray(bg.patternColors) && bg.patternColors.length >= 3
+      ? bg.patternColors
+      : ['#8D7EDB', '#C5B8F0', '#ECE5FF'];
+    const intensity = normalizePatternPercent(bg.patternIntensity, 72);
+    const grain = normalizePatternPercent(bg.patternGrain, 0);
+    const pattern = patterns.find(p => p.id === bg.patternId) || patterns[0];
+
+    // Keep the library API backward-compatible by passing a single accent color.
+    pattern.generate(ctx, W, H, colors[0]);
+    applyPatternColorOverlay(ctx, W, H, colors, intensity);
+    applyPatternGrain(ctx, W, H, grain);
+  }
+
+  function applyPatternColorOverlay(ctx, W, H, colors, intensity = 72) {
+    if (!Array.isArray(colors) || colors.length < 2) return;
+
+    const alphaScale = normalizePatternPercent(intensity, 72) / 100;
+    if (alphaScale <= 0) return;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'soft-light';
+    ctx.globalAlpha = 0.72 * alphaScale;
+
+    const linear = ctx.createLinearGradient(0, 0, W, H);
+    linear.addColorStop(0, colors[0]);
+    linear.addColorStop(0.55, colors[1]);
+    linear.addColorStop(1, colors[2] || colors[1]);
+    ctx.fillStyle = linear;
+    ctx.fillRect(0, 0, W, H);
+
+    const radial = ctx.createRadialGradient(W * 0.84, H * 0.18, 0, W * 0.84, H * 0.18, Math.max(W, H) * 0.6);
+    radial.addColorStop(0, `${colors[2] || colors[1]}aa`);
+    radial.addColorStop(1, `${colors[2] || colors[1]}00`);
+    ctx.globalAlpha = 0.35 * alphaScale;
+    ctx.fillStyle = radial;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.restore();
+  }
+
+  function applyPatternGrain(ctx, W, H, grain = 0) {
+    const amount = normalizePatternPercent(grain, 0);
+    if (amount <= 0) return;
+
+    const tile = getPatternNoiseTile(amount);
+    if (!tile) return;
+
+    const texture = ctx.createPattern(tile, 'repeat');
+    if (!texture) return;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'soft-light';
+    ctx.globalAlpha = 0.2 + (amount / 100) * 0.45;
+    ctx.fillStyle = texture;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+
+  function getPatternNoiseTile(amount) {
+    const level = Math.max(0, Math.min(100, Math.round(amount)));
+    const cacheKey = `${level}`;
+    if (PATTERN_NOISE_TILE_CACHE.has(cacheKey)) {
+      return PATTERN_NOISE_TILE_CACHE.get(cacheKey);
+    }
+
+    const tileSize = 160;
+    const tile = document.createElement('canvas');
+    tile.width = tileSize;
+    tile.height = tileSize;
+
+    const tctx = tile.getContext('2d');
+    const image = tctx.createImageData(tileSize, tileSize);
+    const data = image.data;
+    const noiseStrength = level / 100;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const variance = (Math.random() - 0.5) * 150 * noiseStrength;
+      const shade = Math.max(0, Math.min(255, 128 + variance));
+      data[i] = shade;
+      data[i + 1] = shade;
+      data[i + 2] = shade;
+      data[i + 3] = Math.round(90 * noiseStrength);
+    }
+
+    tctx.putImageData(image, 0, 0);
+    PATTERN_NOISE_TILE_CACHE.set(cacheKey, tile);
+    return tile;
+  }
+
+  function normalizePatternPercent(value, fallback) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return fallback;
+    return Math.max(0, Math.min(100, num));
   }
 
   /**
@@ -252,9 +388,12 @@ window.Renderer = (() => {
       shadowBlur = 60,
       screenBrightness = 0,
       perspective = '',
+      frameType = 'iphone',
     } = opts;
 
-    if (!frameImage) return; // nothing to draw until the frame loads
+    const frameCfg = FRAMES[frameType] || FRAMES.iphone;
+    const currentFrameImage = frameImages[frameType];
+    if (!currentFrameImage) return; // nothing to draw until the frame loads
 
     ctx.save();
 
@@ -275,8 +414,8 @@ window.Renderer = (() => {
     // gaps, outer corners) stay transparent.
     // Use frame's native resolution for maximum screenshot quality,
     // then scale down when compositing onto the main canvas.
-    const pw = frameImage.naturalWidth || Math.round(w);
-    const ph = frameImage.naturalHeight || Math.round(h);
+    const pw = currentFrameImage.naturalWidth || Math.round(w);
+    const ph = currentFrameImage.naturalHeight || Math.round(h);
     const off = document.createElement('canvas');
     off.width = pw;
     off.height = ph;
@@ -285,11 +424,11 @@ window.Renderer = (() => {
     octx.imageSmoothingQuality = 'high';
 
     // Screen area (relative to the offscreen canvas at 0,0)
-    const sx = pw * SCREEN_LEFT;
-    const sy = ph * SCREEN_TOP;
-    const sw = pw * (1 - SCREEN_LEFT - SCREEN_RIGHT);
-    const sh = ph * (1 - SCREEN_TOP - SCREEN_BOTTOM);
-    const screenR = pw * SCREEN_CORNER_RADIUS;
+    const sx = pw * frameCfg.screenLeft;
+    const sy = ph * frameCfg.screenTop;
+    const sw = pw * (1 - frameCfg.screenLeft - frameCfg.screenRight);
+    const sh = ph * (1 - frameCfg.screenTop - frameCfg.screenBottom);
+    const screenR = pw * frameCfg.screenCornerRadius;
 
     // 1. Draw screenshot content
     if (screenshot) {
@@ -299,16 +438,19 @@ window.Renderer = (() => {
       const screenRatio = sw / sh;
 
       let drawW, drawH, drawX, drawY;
+      // Fill width always; if image is taller than screen crop from top (preserve bottom)
       if (imgRatio > screenRatio) {
+        // Image is wider than screen → fit height, centre horizontally (no vertical crop)
         drawH = sh;
         drawW = sh * imgRatio;
         drawX = sx + (sw - drawW) / 2;
         drawY = sy;
       } else {
+        // Image is portrait (taller) → fill width, anchor bottom (crop top if needed)
         drawW = sw;
         drawH = sw / imgRatio;
         drawX = sx;
-        drawY = sy + (sh - drawH) / 2;
+        drawY = sy + sh - drawH; // bottom-aligned: top crops if drawH > sh
       }
 
       octx.save();
@@ -339,7 +481,7 @@ window.Renderer = (() => {
 
     // 2. Draw frame image on top — this masks bezels, buttons, Dynamic
     //    Island, corners. Transparent gaps between buttons stay transparent.
-    octx.drawImage(frameImage, 0, 0, pw, ph);
+    octx.drawImage(currentFrameImage, 0, 0, pw, ph);
 
     // 3. Stamp the composite onto the main canvas (with optional shadow)
     const x = cx - w / 2;
@@ -559,6 +701,7 @@ window.Renderer = (() => {
     drawLayoutThumbnail,
     drawBackground,
     drawPhoneMockup,
+    getPhoneAspectRatio,
     PHONE_W_TO_H,
   };
 

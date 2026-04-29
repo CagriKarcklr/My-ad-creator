@@ -18,14 +18,15 @@ window.Renderer = (() => {
       src: 'Iphone-frame-upscaled.png',
     },
     android: {
-      imgW: 847, imgH: 1759,
-      // Android has very thin bezels; punch-hole camera sits inside the screen
-      screenLeft:   18   / 847,
-      screenTop:    18   / 1759,
-      screenRight:  18   / 847,
-      screenBottom: 22   / 1759,
+      imgW: 884, imgH: 1842,
+      // Fallback insets; runtime alpha detection adapts to updated frame PNGs.
+      screenLeft:   19   / 884,
+      screenTop:    19   / 1842,
+      screenRight:  19   / 884,
+      screenBottom: 23   / 1842,
       screenCornerRadius: 0.11,
       src: 'Android-frame.png',
+      autoDetectScreen: true,
     },
   };
 
@@ -39,23 +40,212 @@ window.Renderer = (() => {
 
   // Pre-load both frame images
   const frameImages = {};
+  const frameRuntimeMeta = {};
+  const detectedScreenMetrics = new Map();
   for (const [key, cfg] of Object.entries(FRAMES)) {
     const img = new Image();
-    img.onload = () => { frameImages[key] = img; };
+    img.onload = () => {
+      frameImages[key] = img;
+      frameRuntimeMeta[key] = {
+        imgW: img.naturalWidth || cfg.imgW,
+        imgH: img.naturalHeight || cfg.imgH,
+      };
+      if (cfg.autoDetectScreen) {
+        const detected = detectScreenBoundsFromAlpha(img);
+        if (detected) detectedScreenMetrics.set(key, detected);
+      }
+    };
     img.src = cfg.src;
   }
 
   // Keep legacy reference so existing code that checks frameImage still works
   let frameImage = null;
   const _legacyImg = new Image();
-  _legacyImg.onload = () => { frameImage = _legacyImg; frameImages.iphone = _legacyImg; };
+  _legacyImg.onload = () => {
+    frameImage = _legacyImg;
+    frameImages.iphone = _legacyImg;
+    frameRuntimeMeta.iphone = {
+      imgW: _legacyImg.naturalWidth || FRAMES.iphone.imgW,
+      imgH: _legacyImg.naturalHeight || FRAMES.iphone.imgH,
+    };
+  };
   _legacyImg.src = FRAMES.iphone.src;
 
   const PATTERN_NOISE_TILE_CACHE = new Map();
 
   function getPhoneAspectRatio(frameType = 'iphone') {
+    const runtime = frameRuntimeMeta[frameType];
+    if (runtime && runtime.imgW && runtime.imgH) {
+      return runtime.imgW / runtime.imgH;
+    }
     const cfg = FRAMES[frameType] || FRAMES.iphone;
     return cfg.imgW / cfg.imgH;
+  }
+
+  function getResolvedScreenConfig(frameType, frameCfg, image) {
+    if (!frameCfg.autoDetectScreen) return frameCfg;
+
+    const cached = detectedScreenMetrics.get(frameType);
+    if (cached) {
+      return {
+        ...frameCfg,
+        ...cached,
+      };
+    }
+
+    const detected = detectScreenBoundsFromAlpha(image);
+    if (!detected) return frameCfg;
+
+    detectedScreenMetrics.set(frameType, detected);
+    return {
+      ...frameCfg,
+      ...detected,
+    };
+  }
+
+  function detectScreenBoundsFromAlpha(image, threshold = 8) {
+    const W = image.naturalWidth || image.width;
+    const H = image.naturalHeight || image.height;
+    if (!W || !H) return null;
+
+    const off = document.createElement('canvas');
+    off.width = W;
+    off.height = H;
+    const ctx = off.getContext('2d');
+    ctx.drawImage(image, 0, 0, W, H);
+
+    const data = ctx.getImageData(0, 0, W, H).data;
+    const alphaAt = (x, y) => data[(y * W + x) * 4 + 3];
+
+    const seed = findTransparentSeedNearCenter(W, H, alphaAt, threshold);
+    if (!seed) return null;
+
+    const total = W * H;
+    const visited = new Uint8Array(total);
+    const qx = new Int32Array(total);
+    const qy = new Int32Array(total);
+
+    let minX = seed.x;
+    let maxX = seed.x;
+    let minY = seed.y;
+    let maxY = seed.y;
+    let area = 0;
+    let touchesEdge = false;
+
+    let head = 0;
+    let tail = 0;
+    const seedIdx = seed.y * W + seed.x;
+    visited[seedIdx] = 1;
+    qx[tail] = seed.x;
+    qy[tail] = seed.y;
+    tail++;
+
+    while (head < tail) {
+      const x = qx[head];
+      const y = qy[head];
+      head++;
+
+      area++;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      if (x === 0 || x === W - 1 || y === 0 || y === H - 1) touchesEdge = true;
+
+      // Left
+      if (x > 0) {
+        const nx = x - 1;
+        const ny = y;
+        const idx = ny * W + nx;
+        if (!visited[idx] && alphaAt(nx, ny) <= threshold) {
+          visited[idx] = 1;
+          qx[tail] = nx;
+          qy[tail] = ny;
+          tail++;
+        }
+      }
+
+      // Right
+      if (x < W - 1) {
+        const nx = x + 1;
+        const ny = y;
+        const idx = ny * W + nx;
+        if (!visited[idx] && alphaAt(nx, ny) <= threshold) {
+          visited[idx] = 1;
+          qx[tail] = nx;
+          qy[tail] = ny;
+          tail++;
+        }
+      }
+
+      // Up
+      if (y > 0) {
+        const nx = x;
+        const ny = y - 1;
+        const idx = ny * W + nx;
+        if (!visited[idx] && alphaAt(nx, ny) <= threshold) {
+          visited[idx] = 1;
+          qx[tail] = nx;
+          qy[tail] = ny;
+          tail++;
+        }
+      }
+
+      // Down
+      if (y < H - 1) {
+        const nx = x;
+        const ny = y + 1;
+        const idx = ny * W + nx;
+        if (!visited[idx] && alphaAt(nx, ny) <= threshold) {
+          visited[idx] = 1;
+          qx[tail] = nx;
+          qy[tail] = ny;
+          tail++;
+        }
+      }
+    }
+
+    // Ignore tiny transparent holes and edge-connected transparency.
+    if (touchesEdge) return null;
+    if (area < total * 0.08) return null;
+
+    const insetPad = 1;
+    minX = Math.max(0, minX + insetPad);
+    minY = Math.max(0, minY + insetPad);
+    maxX = Math.min(W - 1, maxX - insetPad);
+    maxY = Math.min(H - 1, maxY - insetPad);
+
+    return {
+      screenLeft: minX / W,
+      screenTop: minY / H,
+      screenRight: (W - (maxX + 1)) / W,
+      screenBottom: (H - (maxY + 1)) / H,
+    };
+  }
+
+  function findTransparentSeedNearCenter(W, H, alphaAt, threshold) {
+    const cx = Math.floor(W / 2);
+    const cy = Math.floor(H / 2);
+    const maxR = Math.max(cx, cy);
+
+    for (let r = 0; r <= maxR; r += 2) {
+      const x0 = Math.max(1, cx - r);
+      const x1 = Math.min(W - 2, cx + r);
+      const y0 = Math.max(1, cy - r);
+      const y1 = Math.min(H - 2, cy + r);
+
+      for (let x = x0; x <= x1; x += 2) {
+        if (alphaAt(x, y0) <= threshold) return { x, y: y0 };
+        if (alphaAt(x, y1) <= threshold) return { x, y: y1 };
+      }
+
+      for (let y = y0 + 2; y <= y1 - 2; y += 2) {
+        if (alphaAt(x0, y) <= threshold) return { x: x0, y };
+        if (alphaAt(x1, y) <= threshold) return { x: x1, y };
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -98,8 +288,7 @@ window.Renderer = (() => {
         }
 
         const frameType = state.frameType || 'iphone';
-        const frameCfg = FRAMES[frameType] || FRAMES.iphone;
-        const ph = pw / (frameCfg.imgW / frameCfg.imgH);
+        const ph = pw / getPhoneAspectRatio(frameType);
 
         drawPhoneMockup(ctx, px, py, pw, ph, screenshot, {
           rotation: rotation,
@@ -394,6 +583,7 @@ window.Renderer = (() => {
     const frameCfg = FRAMES[frameType] || FRAMES.iphone;
     const currentFrameImage = frameImages[frameType];
     if (!currentFrameImage) return; // nothing to draw until the frame loads
+    const resolvedFrameCfg = getResolvedScreenConfig(frameType, frameCfg, currentFrameImage);
 
     ctx.save();
 
@@ -424,11 +614,11 @@ window.Renderer = (() => {
     octx.imageSmoothingQuality = 'high';
 
     // Screen area (relative to the offscreen canvas at 0,0)
-    const sx = pw * frameCfg.screenLeft;
-    const sy = ph * frameCfg.screenTop;
-    const sw = pw * (1 - frameCfg.screenLeft - frameCfg.screenRight);
-    const sh = ph * (1 - frameCfg.screenTop - frameCfg.screenBottom);
-    const screenR = pw * frameCfg.screenCornerRadius;
+    const sx = pw * resolvedFrameCfg.screenLeft;
+    const sy = ph * resolvedFrameCfg.screenTop;
+    const sw = pw * (1 - resolvedFrameCfg.screenLeft - resolvedFrameCfg.screenRight);
+    const sh = ph * (1 - resolvedFrameCfg.screenTop - resolvedFrameCfg.screenBottom);
+    const screenR = pw * resolvedFrameCfg.screenCornerRadius;
 
     // 1. Draw screenshot content
     if (screenshot) {

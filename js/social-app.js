@@ -1907,6 +1907,7 @@
   // ==================== TEXT PANEL ====================
   function setupTextPanel() {
     renderTextLayers();
+    setupTextPresetControls();
 
     const addBtn = document.getElementById('social-btn-add-text');
     if (addBtn) {
@@ -1933,6 +1934,131 @@
         requestRender();
       });
     }
+  }
+
+  function setupTextPresetControls() {
+    const select = document.getElementById('social-text-preset-select');
+    const prevBtn = document.getElementById('social-btn-prev-text-preset');
+    const applyBtn = document.getElementById('social-btn-apply-text-preset');
+    const nextBtn = document.getElementById('social-btn-next-text-preset');
+    const description = document.getElementById('social-text-preset-description');
+    const screenshotNote = document.getElementById('social-text-preset-screenshot-note');
+    if (!select || !applyBtn || !description || !screenshotNote) return;
+
+    const presets = getSharedTextPresets();
+    select.innerHTML = '';
+    if (presets.length === 0) {
+      const option = document.createElement('option');
+      option.textContent = 'No text presets loaded';
+      option.value = '';
+      select.appendChild(option);
+      select.disabled = true;
+      applyBtn.disabled = true;
+      description.textContent = 'Text preset library is unavailable.';
+      screenshotNote.textContent = '';
+      return;
+    }
+
+    for (const preset of presets) {
+      const option = document.createElement('option');
+      option.value = String(preset.number);
+      option.textContent = `Preset text ${preset.number}`;
+      select.appendChild(option);
+    }
+
+    const syncInfo = () => {
+      const active = presets.find((item) => String(item.number) === select.value) || presets[0];
+      if (!active) return;
+      description.textContent = `${active.category}: ${active.subtext}`;
+      screenshotNote.textContent = `Screenshot note: ${active.screenshotNote}`;
+    };
+
+    const applySelection = () => {
+      const active = presets.find((item) => String(item.number) === select.value);
+      if (!active) return;
+      applyTextPreset(active);
+    };
+
+    const cyclePreset = (step) => {
+      if (presets.length === 0) return;
+      const currentIndex = Math.max(0, select.selectedIndex);
+      const nextIndex = (currentIndex + step + presets.length) % presets.length;
+      select.selectedIndex = nextIndex;
+      syncInfo();
+      applySelection();
+    };
+
+    select.addEventListener('change', syncInfo);
+    applyBtn.addEventListener('click', applySelection);
+    if (prevBtn) prevBtn.addEventListener('click', () => cyclePreset(-1));
+    if (nextBtn) nextBtn.addEventListener('click', () => cyclePreset(1));
+
+    syncInfo();
+  }
+
+  function getSharedTextPresets() {
+    if (!window.AdTextPresets || !Array.isArray(window.AdTextPresets.items)) return [];
+    return window.AdTextPresets.items;
+  }
+
+  function applyTextPreset(preset) {
+    const existing = Array.isArray(state.texts) ? state.texts : [];
+    const heroTemplate = existing[0] || {};
+    const subTemplate = existing[1] || {};
+
+    const heroId = Number.isFinite(heroTemplate.id) ? heroTemplate.id : 1;
+    let subId = Number.isFinite(subTemplate.id) ? subTemplate.id : 2;
+    if (subId === heroId) subId = heroId + 1;
+
+    const hero = {
+      ...heroTemplate,
+      id: heroId,
+      content: preset.hero,
+      font: 'Inter',
+      weight: 700,
+      size: Number.isFinite(heroTemplate.size) ? heroTemplate.size : 72,
+      color: heroTemplate.color || '#FFFFFF',
+      x: Number.isFinite(heroTemplate.x) ? heroTemplate.x : 50,
+      y: Number.isFinite(heroTemplate.y) ? heroTemplate.y : 6,
+      align: heroTemplate.align || 'center',
+      lineHeight: Number.isFinite(heroTemplate.lineHeight) ? heroTemplate.lineHeight : 1.1,
+      maxWidth: Number.isFinite(heroTemplate.maxWidth) ? heroTemplate.maxWidth : 85,
+      letterSpacing: Number.isFinite(heroTemplate.letterSpacing) ? heroTemplate.letterSpacing : -1,
+      shadow: typeof heroTemplate.shadow === 'boolean' ? heroTemplate.shadow : false,
+      shadowColor: heroTemplate.shadowColor || 'rgba(0,0,0,0.3)',
+      shadowBlur: Number.isFinite(heroTemplate.shadowBlur) ? heroTemplate.shadowBlur : 10,
+      shadowOffsetX: Number.isFinite(heroTemplate.shadowOffsetX) ? heroTemplate.shadowOffsetX : 0,
+      shadowOffsetY: Number.isFinite(heroTemplate.shadowOffsetY) ? heroTemplate.shadowOffsetY : 4,
+    };
+
+    const sub = {
+      ...subTemplate,
+      id: subId,
+      content: preset.subtext,
+      font: 'Inter',
+      weight: 400,
+      size: Number.isFinite(subTemplate.size) ? subTemplate.size : 36,
+      color: subTemplate.color || '#FFFFFFCC',
+      x: Number.isFinite(subTemplate.x) ? subTemplate.x : 50,
+      y: Number.isFinite(subTemplate.y) ? subTemplate.y : 20,
+      align: subTemplate.align || 'center',
+      lineHeight: Number.isFinite(subTemplate.lineHeight) ? subTemplate.lineHeight : 1.3,
+      maxWidth: Number.isFinite(subTemplate.maxWidth) ? subTemplate.maxWidth : 80,
+      letterSpacing: Number.isFinite(subTemplate.letterSpacing) ? subTemplate.letterSpacing : 0,
+      shadow: typeof subTemplate.shadow === 'boolean' ? subTemplate.shadow : false,
+      shadowColor: subTemplate.shadowColor || 'rgba(0,0,0,0.2)',
+      shadowBlur: Number.isFinite(subTemplate.shadowBlur) ? subTemplate.shadowBlur : 8,
+      shadowOffsetX: Number.isFinite(subTemplate.shadowOffsetX) ? subTemplate.shadowOffsetX : 0,
+      shadowOffsetY: Number.isFinite(subTemplate.shadowOffsetY) ? subTemplate.shadowOffsetY : 3,
+    };
+
+    state.texts = [hero, sub, ...existing.slice(2)];
+    state.nextTextId = state.texts.reduce((maxId, text) => {
+      return Math.max(maxId, Number.isFinite(text.id) ? text.id : 0);
+    }, 0) + 1;
+
+    renderTextLayers();
+    requestRender();
   }
 
   function renderTextLayers() {

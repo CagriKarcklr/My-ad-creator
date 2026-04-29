@@ -367,8 +367,59 @@
     { name: 'Tangerine Pop', colors: ['#ff7e5f', '#feb47b', '#ffe29f'], angle: 135 },
   ];
 
+  const CUSTOM_BG_STORAGE_KEY = 'ad-creator-custom-background-presets-v1';
+  const BUILTIN_BACKGROUND_PRESETS = [
+    {
+      id: 'builtin-lavender-flow',
+      name: 'Spendaily Lavender Flow',
+      source: 'builtin',
+      background: {
+        type: 'gradient',
+        colors: ['#BCA5E7', '#D4B4E6', '#F4D7D4'],
+        stops: [0, 0.52, 1],
+        angle: 162,
+      },
+    },
+    {
+      id: 'builtin-dawn-sky',
+      name: 'Spendaily Dawn Sky',
+      source: 'builtin',
+      background: {
+        type: 'gradient',
+        colors: ['#9BAEEB', '#BFA7E8', '#E3C2E4'],
+        stops: [0, 0.56, 1],
+        angle: 174,
+      },
+    },
+    {
+      id: 'builtin-ribbon-soft',
+      name: 'Spendaily Ribbon Soft',
+      source: 'builtin',
+      background: {
+        type: 'pattern',
+        patternId: 'pat-ribbon-layers',
+        patternColors: ['#A58BE4', '#D1BFF5', '#F1E9FF'],
+        patternIntensity: 70,
+        patternGrain: 6,
+      },
+    },
+    {
+      id: 'builtin-mesh-ledger',
+      name: 'Spendaily Mesh Ledger',
+      source: 'builtin',
+      background: {
+        type: 'mesh',
+        meshColors: ['#6E79D6', '#9283CA', '#C8A1DF', '#F0BFD8'],
+        meshComplexity: 5,
+      },
+    },
+  ];
+
   // ==================== APPLICATION STATE ====================
   let state = createDefaultState();
+  let variants = [];
+  let activeVariantId = null;
+  let customBackgroundPresets = loadCustomBackgroundPresets();
 
   function createDefaultState() {
     return {
@@ -467,6 +518,7 @@
   // ==================== INITIALIZATION ====================
   function init() {
     setupCanvas();
+    setupVariantManager();
     setupCanvasDrag();
     setupUploadZones();
     setupLayoutGrid();
@@ -504,6 +556,295 @@
       Renderer.render(canvas, state);
       drawDragGuides();
     });
+  }
+
+  // ==================== VARIANTS ====================
+  function setupVariantManager() {
+    variants = [{
+      id: createVariantId(),
+      name: 'Ad 1',
+      state,
+    }];
+    activeVariantId = variants[0].id;
+    renderVariantTabs();
+
+    const newBtn = document.getElementById('btn-new-variant');
+    if (newBtn) {
+      newBtn.addEventListener('click', () => {
+        const newVariantState = cloneStateForVariant(state);
+        addVariant(getNextDefaultVariantName(), newVariantState, true);
+      });
+    }
+  }
+
+  function createVariantId() {
+    return `variant-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  }
+
+  function getNextDefaultVariantName() {
+    const usedNames = new Set(variants.map((item) => item.name));
+    let index = 1;
+    while (usedNames.has(`Ad ${index}`)) {
+      index += 1;
+    }
+    return `Ad ${index}`;
+  }
+
+  function getActiveVariant() {
+    return variants.find((item) => item.id === activeVariantId) || null;
+  }
+
+  function addVariant(name, nextState, activate = false) {
+    const normalizedState = normalizeStateForEditing(nextState || createDefaultState());
+    const variant = {
+      id: createVariantId(),
+      name: name || `Ad ${variants.length + 1}`,
+      state: normalizedState,
+    };
+    variants.push(variant);
+    renderVariantTabs();
+    if (activate) switchToVariant(variant.id);
+    return variant;
+  }
+
+  function switchToVariant(variantId) {
+    const nextVariant = variants.find((item) => item.id === variantId);
+    if (!nextVariant) return;
+
+    activeVariantId = variantId;
+    state = normalizeStateForEditing(nextVariant.state);
+    nextVariant.state = state;
+
+    renderVariantTabs();
+    syncStateToUI();
+    requestRender();
+  }
+
+  function removeVariant(variantId) {
+    if (variants.length <= 1) return;
+    const index = variants.findIndex((item) => item.id === variantId);
+    if (index === -1) return;
+
+    const wasActive = activeVariantId === variantId;
+    variants.splice(index, 1);
+
+    if (wasActive) {
+      const fallback = variants[Math.max(0, index - 1)] || variants[0];
+      switchToVariant(fallback.id);
+      return;
+    }
+
+    renderVariantTabs();
+  }
+
+  function renderVariantTabs() {
+    const container = document.getElementById('variant-tabs');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const canRemove = variants.length > 1;
+
+    for (const variant of variants) {
+      const tab = document.createElement('button');
+      tab.type = 'button';
+      tab.className = `variant-tab${variant.id === activeVariantId ? ' active' : ''}`;
+      tab.dataset.variantId = variant.id;
+
+      const name = document.createElement('span');
+      name.className = 'variant-tab-name';
+      name.textContent = variant.name;
+      tab.appendChild(name);
+
+      const closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'variant-tab-close';
+      closeBtn.textContent = '×';
+      closeBtn.title = 'Remove variant';
+      if (!canRemove) closeBtn.classList.add('hidden');
+
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeVariant(variant.id);
+      });
+
+      tab.appendChild(closeBtn);
+      tab.addEventListener('click', () => switchToVariant(variant.id));
+      container.appendChild(tab);
+    }
+  }
+
+  function cloneStateForVariant(sourceState) {
+    const source = normalizeStateForEditing(sourceState || createDefaultState());
+    return normalizeStateForEditing({
+      ...source,
+      background: cloneBackgroundState(source.background),
+      texts: source.texts.map((item) => ({ ...item })),
+      extractedColors: Array.isArray(source.extractedColors)
+        ? source.extractedColors.map((item) => ({ ...item }))
+        : [],
+    });
+  }
+
+  function normalizeStateForEditing(rawState) {
+    const defaults = createDefaultState();
+    const nextState = {
+      ...defaults,
+      ...rawState,
+    };
+
+    nextState.currentLayoutId = nextState.currentLayoutId in LAYOUTS ? nextState.currentLayoutId : 'single-center';
+    nextState.currentLayout = LAYOUTS[nextState.currentLayoutId];
+    nextState.background = cloneBackgroundState(nextState.background);
+    nextState.texts = Array.isArray(nextState.texts)
+      ? nextState.texts.map((item) => ({ ...item }))
+      : defaults.texts.map((item) => ({ ...item }));
+
+    const maxTextId = nextState.texts.reduce((maxId, item) => {
+      return Math.max(maxId, Number.isFinite(item.id) ? item.id : 0);
+    }, 0);
+    nextState.nextTextId = Number.isFinite(nextState.nextTextId) ? Math.max(nextState.nextTextId, maxTextId + 1) : maxTextId + 1;
+
+    return nextState;
+  }
+
+  function cloneBackgroundState(rawBackground) {
+    const fallback = createDefaultState().background;
+    const background = {
+      ...fallback,
+      ...(rawBackground || {}),
+    };
+
+    background.colors = Array.isArray(background.colors) && background.colors.length > 0 ? [...background.colors] : [...fallback.colors];
+    background.stops = Array.isArray(background.stops) && background.stops.length === background.colors.length
+      ? [...background.stops]
+      : background.colors.map((_, index) => index / Math.max(1, background.colors.length - 1));
+    background.patternColors = Array.isArray(background.patternColors) && background.patternColors.length > 0
+      ? [...background.patternColors]
+      : [...fallback.patternColors];
+    background.meshColors = Array.isArray(background.meshColors) && background.meshColors.length > 0
+      ? [...background.meshColors]
+      : [...fallback.meshColors];
+
+    return background;
+  }
+
+  function syncStateToUI() {
+    setupCanvas();
+
+    const info = document.getElementById('canvas-info');
+    if (info) info.textContent = `${state.canvasWidth} × ${state.canvasHeight} px`;
+
+    const sizeSelect = document.getElementById('canvas-size');
+    const sizeValue = `${state.canvasWidth}x${state.canvasHeight}`;
+    if (sizeSelect && Array.from(sizeSelect.options).some((option) => option.value === sizeValue)) {
+      sizeSelect.value = sizeValue;
+    }
+
+    renderLayoutGrid(activeCat);
+    syncDualControlsVisibility();
+    updateLayoutSlidersUI();
+    renderTextLayers();
+    updateBackgroundUI();
+    syncPhonePanelUI();
+    syncLogoPanelUI();
+    syncUploadUI();
+    syncExtractedColorsUI();
+  }
+
+  function syncDualControlsVisibility() {
+    const dualControls = document.getElementById('dual-controls');
+    if (!dualControls) return;
+    const isDual = state.currentLayout && Array.isArray(state.currentLayout.phones) && state.currentLayout.phones.length > 1;
+    dualControls.classList.toggle('hidden', !isDual);
+  }
+
+  function syncPhonePanelUI() {
+    setSliderValue('phone-scale', state.phoneScale, `${state.phoneScale}%`);
+    setSliderValue('phone-y', state.phoneY, `${state.phoneY}%`);
+    setSliderValue('phone-x', state.phoneX, `${state.phoneX}%`);
+    setSliderValue('phone-rotation', state.phoneRotation, `${state.phoneRotation}°`);
+    setSliderValue('phone2-scale', state.phone2Scale, `${state.phone2Scale}%`);
+    setSliderValue('phone2-y', state.phone2Y, `${state.phone2Y}%`);
+    setSliderValue('phone2-x', state.phone2X, `${state.phone2X}%`);
+    setSliderValue('phone2-rotation', state.phone2Rotation, `${state.phone2Rotation}°`);
+    setSliderValue('shadow-intensity', state.shadowIntensity, `${state.shadowIntensity}%`);
+    setSliderValue('shadow-blur', state.shadowBlur, `${state.shadowBlur}`);
+    setSliderValue('screen-brightness', state.screenBrightness, `${state.screenBrightness}`);
+
+    const phoneShadowToggle = document.getElementById('phone-shadow');
+    if (phoneShadowToggle) phoneShadowToggle.checked = !!state.phoneShadow;
+
+    document.querySelectorAll('.frame-type-btn').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.frameType === state.frameType);
+    });
+  }
+
+  function syncLogoPanelUI() {
+    setSliderValue('logo-scale', state.logoScale, `${state.logoScale}%`);
+    setSliderValue('logo-x', state.logoX, `${state.logoX}%`);
+    setSliderValue('logo-y', state.logoY, `${state.logoY}%`);
+    setSliderValue('logo-opacity', state.logoOpacity, `${state.logoOpacity}%`);
+
+    const zone = document.getElementById('logo-upload-zone');
+    const preview = document.getElementById('logo-upload-preview');
+    const placeholder = document.getElementById('logo-upload-placeholder');
+    const removeBtn = document.getElementById('logo-upload-remove');
+
+    if (!zone || !preview || !placeholder || !removeBtn) return;
+
+    if (state.logo && state.logo.src) {
+      preview.src = state.logo.src;
+      preview.classList.remove('hidden');
+      removeBtn.classList.remove('hidden');
+      placeholder.classList.add('hidden');
+      zone.classList.add('has-image');
+    } else {
+      preview.src = '';
+      preview.classList.add('hidden');
+      removeBtn.classList.add('hidden');
+      placeholder.classList.remove('hidden');
+      zone.classList.remove('has-image');
+    }
+  }
+
+  function syncUploadUI() {
+    syncSingleUploadUI(1, state.screenshot);
+    syncSingleUploadUI(2, state.screenshot2);
+  }
+
+  function syncSingleUploadUI(num, image) {
+    const preview = document.getElementById(`upload-preview-${num}`);
+    const placeholder = document.getElementById(`upload-placeholder-${num}`);
+    const removeBtn = document.getElementById(`upload-remove-${num}`);
+    const zone = document.getElementById(`upload-zone-${num}`);
+    const input = document.getElementById(`upload-input-${num}`);
+    if (!preview || !placeholder || !removeBtn || !zone || !input) return;
+
+    if (image && image.src) {
+      preview.src = image.src;
+      preview.classList.remove('hidden');
+      removeBtn.classList.remove('hidden');
+      placeholder.classList.add('hidden');
+      zone.classList.add('has-image');
+    } else {
+      preview.src = '';
+      preview.classList.add('hidden');
+      removeBtn.classList.add('hidden');
+      placeholder.classList.remove('hidden');
+      zone.classList.remove('has-image');
+    }
+
+    input.value = '';
+  }
+
+  function syncExtractedColorsUI() {
+    const container = document.getElementById('extracted-colors');
+    if (!container) return;
+    if (Array.isArray(state.extractedColors) && state.extractedColors.length > 0) {
+      showExtractedColors(state.extractedColors);
+      return;
+    }
+    container.classList.add('hidden');
   }
 
   function setupCanvasDrag() {
@@ -919,6 +1260,7 @@
   function setupUploadZones() {
     setupSingleUpload(1);
     setupSingleUpload(2);
+    setupBulkVariantCreator();
 
     // Auto theme button
     document.getElementById('btn-auto-theme').addEventListener('click', () => {
@@ -976,6 +1318,182 @@
     });
   }
 
+  function setupBulkVariantCreator() {
+    const list = document.getElementById('bulk-preset-checklist');
+    const fileInput = document.getElementById('bulk-screenshots-input');
+    const createBtn = document.getElementById('btn-bulk-create-variants');
+    const selectAllBtn = document.getElementById('btn-bulk-select-all');
+    const clearBtn = document.getElementById('btn-bulk-clear');
+    const hint = document.getElementById('bulk-create-hint');
+    if (!list || !fileInput || !createBtn) return;
+
+    const presets = getSharedTextPresets();
+    list.innerHTML = '';
+
+    for (const preset of presets) {
+      const label = document.createElement('label');
+      label.className = 'bulk-preset-item';
+
+      const check = document.createElement('input');
+      check.type = 'checkbox';
+      check.value = String(preset.number);
+
+      const copy = document.createElement('div');
+      copy.className = 'bulk-preset-copy';
+
+      const title = document.createElement('div');
+      title.className = 'bulk-preset-title';
+      title.textContent = `Preset text ${preset.number}`;
+
+      const sub = document.createElement('div');
+      sub.className = 'bulk-preset-sub';
+      sub.textContent = `${preset.hero} | ${preset.subtext}`;
+
+      copy.appendChild(title);
+      copy.appendChild(sub);
+      label.appendChild(check);
+      label.appendChild(copy);
+      list.appendChild(label);
+    }
+
+    if (selectAllBtn) {
+      selectAllBtn.addEventListener('click', () => {
+        list.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+          input.checked = true;
+        });
+      });
+    }
+
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        list.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+          input.checked = false;
+        });
+      });
+    }
+
+    createBtn.addEventListener('click', async () => {
+      const selectedNumbers = Array.from(list.querySelectorAll('input[type="checkbox"]:checked'))
+        .map((input) => parseInt(input.value, 10))
+        .filter((value) => Number.isFinite(value));
+
+      if (selectedNumbers.length === 0) {
+        if (hint) hint.textContent = 'Select at least one text preset to create variants.';
+        return;
+      }
+
+      createBtn.disabled = true;
+      const originalText = createBtn.textContent;
+      createBtn.textContent = 'Creating...';
+
+      try {
+        const files = Array.from(fileInput.files || []);
+        const screenshots = await Promise.all(files.map(async (file) => ({
+          file,
+          image: await loadImageFromFile(file),
+        })));
+        const usedVariantNames = new Set(variants.map((item) => item.name));
+
+        const created = [];
+        for (let i = 0; i < selectedNumbers.length; i++) {
+          const number = selectedNumbers[i];
+          const preset = presets.find((item) => item.number === number);
+          if (!preset) continue;
+
+          const nextState = cloneStateForVariant(state);
+          applyTextPresetToState(nextState, preset);
+
+          const screenshotEntry = screenshots[i] || screenshots[0] || null;
+          if (screenshotEntry && screenshotEntry.image) {
+            nextState.screenshot = screenshotEntry.image;
+            applyAutoThemeToState(nextState);
+          }
+
+          const variantName = buildBulkVariantName(preset, screenshotEntry ? screenshotEntry.file : null, usedVariantNames);
+          const createdVariant = addVariant(variantName, nextState, false);
+          usedVariantNames.add(createdVariant.name);
+          created.push(createdVariant.id);
+        }
+
+        if (created.length > 0) {
+          switchToVariant(created[0]);
+          if (hint) hint.textContent = `${created.length} variants created. Each one is now available as a tab above the canvas.`;
+        }
+      } catch (error) {
+        if (hint) hint.textContent = 'Could not read one of the screenshot files. Please try with different files.';
+      } finally {
+        createBtn.disabled = false;
+        createBtn.textContent = originalText;
+      }
+    });
+  }
+
+  function loadImageFromFile(file) {
+    return new Promise((resolve, reject) => {
+      if (!file || !file.type || !file.type.startsWith('image/')) {
+        reject(new Error('Invalid image file'));
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Failed to decode image file'));
+        img.src = e.target.result;
+      };
+      reader.onerror = () => reject(new Error('Failed to read image file'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function buildBulkVariantName(preset, screenshotFile, usedNames) {
+    const presetPart = formatPresetNamePart(preset);
+    const screenshotPart = formatScreenshotNamePart(screenshotFile);
+    const baseName = screenshotPart ? `${presetPart} · ${screenshotPart}` : presetPart;
+    return getUniqueLabel(baseName, usedNames);
+  }
+
+  function formatPresetNamePart(preset) {
+    if (!preset) return 'Preset';
+
+    const fallback = Number.isFinite(preset.number) ? `Preset ${preset.number}` : 'Preset';
+    const hero = typeof preset.hero === 'string' ? preset.hero : '';
+    const words = hero
+      .replace(/[\n\r]+/g, ' ')
+      .replace(/[^\w\s']/g, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 5);
+
+    return words.length > 0 ? words.join(' ') : fallback;
+  }
+
+  function formatScreenshotNamePart(screenshotFile) {
+    if (!screenshotFile || typeof screenshotFile.name !== 'string') return '';
+
+    const noExtension = screenshotFile.name.replace(/\.[^.]+$/, '');
+    const cleaned = noExtension
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    return cleaned.slice(0, 40);
+  }
+
+  function getUniqueLabel(baseLabel, existingLabels) {
+    const cleanedBase = (baseLabel || 'Variant').replace(/\s+/g, ' ').trim().slice(0, 72) || 'Variant';
+    if (!existingLabels || !existingLabels.has(cleanedBase)) return cleanedBase;
+
+    let index = 2;
+    while (true) {
+      const candidate = `${cleanedBase} (${index})`;
+      if (!existingLabels.has(candidate)) return candidate;
+      index += 1;
+    }
+  }
+
   function loadImageFile(file, num) {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -1007,27 +1525,32 @@
     reader.readAsDataURL(file);
   }
 
-  function applyAutoTheme() {
-    if (!state.screenshot) return;
+  function applyAutoThemeToState(targetState) {
+    if (!targetState || !targetState.screenshot) return;
 
-    const colors = ColorExtractor.extract(state.screenshot, 8);
-    const brightness = ColorExtractor.analyzeBrightness(state.screenshot);
+    const colors = ColorExtractor.extract(targetState.screenshot, 8);
+    const brightness = ColorExtractor.analyzeBrightness(targetState.screenshot);
     const gradient = ColorExtractor.generateGradient(colors, brightness);
     const textColor = ColorExtractor.suggestTextColor(gradient.colors);
 
-    state.extractedColors = colors;
-    state.background.type = 'gradient';
-    state.background.colors = gradient.colors;
-    state.background.stops = gradient.colors.map((_, i) => i / (gradient.colors.length - 1));
-    state.background.angle = gradient.angle;
+    targetState.extractedColors = colors;
+    targetState.background.type = 'gradient';
+    targetState.background.colors = [...gradient.colors];
+    targetState.background.stops = gradient.colors.map((_, i) => i / Math.max(1, gradient.colors.length - 1));
+    targetState.background.angle = gradient.angle;
 
-    // Update text colors
-    for (const text of state.texts) {
-      text.color = textColor;
+    if (Array.isArray(targetState.texts)) {
+      for (const text of targetState.texts) {
+        text.color = textColor;
+      }
     }
+  }
 
-    // Show extracted colors in UI
-    showExtractedColors(colors);
+  function applyAutoTheme() {
+    if (!state.screenshot) return;
+
+    applyAutoThemeToState(state);
+    showExtractedColors(state.extractedColors || []);
     updateBackgroundUI();
     updateTextUI();
     activateBgType('gradient');
@@ -1188,6 +1711,7 @@
   // ==================== TEXT PANEL ====================
   function setupTextPanel() {
     renderTextLayers();
+    setupTextPresetControls();
 
     document.getElementById('btn-add-text').addEventListener('click', () => {
       state.texts.push({
@@ -1211,6 +1735,137 @@
       renderTextLayers();
       requestRender();
     });
+  }
+
+  function setupTextPresetControls() {
+    const select = document.getElementById('text-preset-select');
+    const prevBtn = document.getElementById('btn-prev-text-preset');
+    const applyBtn = document.getElementById('btn-apply-text-preset');
+    const nextBtn = document.getElementById('btn-next-text-preset');
+    const description = document.getElementById('text-preset-description');
+    const screenshotNote = document.getElementById('text-preset-screenshot-note');
+    if (!select || !applyBtn || !description || !screenshotNote) return;
+
+    const presets = getSharedTextPresets();
+    select.innerHTML = '';
+    if (presets.length === 0) {
+      const option = document.createElement('option');
+      option.textContent = 'No text presets loaded';
+      option.value = '';
+      select.appendChild(option);
+      select.disabled = true;
+      applyBtn.disabled = true;
+      description.textContent = 'Text preset library is unavailable.';
+      screenshotNote.textContent = '';
+      return;
+    }
+
+    for (const preset of presets) {
+      const option = document.createElement('option');
+      option.value = String(preset.number);
+      option.textContent = `Preset text ${preset.number}`;
+      select.appendChild(option);
+    }
+
+    const syncInfo = () => {
+      const active = presets.find((item) => String(item.number) === select.value) || presets[0];
+      if (!active) return;
+      description.textContent = `${active.category}: ${active.subtext}`;
+      screenshotNote.textContent = `Screenshot note: ${active.screenshotNote}`;
+    };
+
+    const applySelection = () => {
+      const active = presets.find((item) => String(item.number) === select.value);
+      if (!active) return;
+      applyTextPreset(active);
+    };
+
+    const cyclePreset = (step) => {
+      if (presets.length === 0) return;
+      const currentIndex = Math.max(0, select.selectedIndex);
+      const nextIndex = (currentIndex + step + presets.length) % presets.length;
+      select.selectedIndex = nextIndex;
+      syncInfo();
+      applySelection();
+    };
+
+    select.addEventListener('change', syncInfo);
+    applyBtn.addEventListener('click', applySelection);
+    if (prevBtn) prevBtn.addEventListener('click', () => cyclePreset(-1));
+    if (nextBtn) nextBtn.addEventListener('click', () => cyclePreset(1));
+
+    syncInfo();
+  }
+
+  function getSharedTextPresets() {
+    if (!window.AdTextPresets || !Array.isArray(window.AdTextPresets.items)) return [];
+    return window.AdTextPresets.items;
+  }
+
+  function applyTextPreset(preset) {
+    applyTextPresetToState(state, preset);
+
+    renderTextLayers();
+    requestRender();
+  }
+
+  function applyTextPresetToState(targetState, preset) {
+    if (!targetState || !preset) return;
+
+    const existing = Array.isArray(targetState.texts) ? targetState.texts : [];
+    const heroTemplate = existing[0] || {};
+    const subTemplate = existing[1] || {};
+
+    const heroId = Number.isFinite(heroTemplate.id) ? heroTemplate.id : 1;
+    let subId = Number.isFinite(subTemplate.id) ? subTemplate.id : 2;
+    if (subId === heroId) subId = heroId + 1;
+
+    const hero = {
+      ...heroTemplate,
+      id: heroId,
+      content: preset.hero,
+      font: 'Inter',
+      weight: 700,
+      size: Number.isFinite(heroTemplate.size) ? heroTemplate.size : 96,
+      color: heroTemplate.color || '#FFFFFF',
+      x: Number.isFinite(heroTemplate.x) ? heroTemplate.x : 50,
+      y: Number.isFinite(heroTemplate.y) ? heroTemplate.y : 7,
+      align: heroTemplate.align || 'center',
+      lineHeight: Number.isFinite(heroTemplate.lineHeight) ? heroTemplate.lineHeight : 1.1,
+      maxWidth: Number.isFinite(heroTemplate.maxWidth) ? heroTemplate.maxWidth : 85,
+      letterSpacing: Number.isFinite(heroTemplate.letterSpacing) ? heroTemplate.letterSpacing : -1,
+      shadow: typeof heroTemplate.shadow === 'boolean' ? heroTemplate.shadow : false,
+      shadowColor: heroTemplate.shadowColor || 'rgba(0,0,0,0.3)',
+      shadowBlur: Number.isFinite(heroTemplate.shadowBlur) ? heroTemplate.shadowBlur : 10,
+      shadowOffsetX: Number.isFinite(heroTemplate.shadowOffsetX) ? heroTemplate.shadowOffsetX : 0,
+      shadowOffsetY: Number.isFinite(heroTemplate.shadowOffsetY) ? heroTemplate.shadowOffsetY : 4,
+    };
+
+    const sub = {
+      ...subTemplate,
+      id: subId,
+      content: preset.subtext,
+      font: 'Inter',
+      weight: 400,
+      size: Number.isFinite(subTemplate.size) ? subTemplate.size : 52,
+      color: subTemplate.color || '#FFFFFF',
+      x: Number.isFinite(subTemplate.x) ? subTemplate.x : 50,
+      y: Number.isFinite(subTemplate.y) ? subTemplate.y : 25,
+      align: subTemplate.align || 'center',
+      lineHeight: Number.isFinite(subTemplate.lineHeight) ? subTemplate.lineHeight : 1.3,
+      maxWidth: Number.isFinite(subTemplate.maxWidth) ? subTemplate.maxWidth : 80,
+      letterSpacing: Number.isFinite(subTemplate.letterSpacing) ? subTemplate.letterSpacing : 0,
+      shadow: typeof subTemplate.shadow === 'boolean' ? subTemplate.shadow : false,
+      shadowColor: subTemplate.shadowColor || 'rgba(0,0,0,0.2)',
+      shadowBlur: Number.isFinite(subTemplate.shadowBlur) ? subTemplate.shadowBlur : 8,
+      shadowOffsetX: Number.isFinite(subTemplate.shadowOffsetX) ? subTemplate.shadowOffsetX : 0,
+      shadowOffsetY: Number.isFinite(subTemplate.shadowOffsetY) ? subTemplate.shadowOffsetY : 3,
+    };
+
+    targetState.texts = [hero, sub, ...existing.slice(2)];
+    targetState.nextTextId = targetState.texts.reduce((maxId, text) => {
+      return Math.max(maxId, Number.isFinite(text.id) ? text.id : 0);
+    }, 0) + 1;
   }
 
   function renderTextLayers() {
@@ -1537,6 +2192,7 @@
     syncPatternColorInputs();
     bindPatternToneInputs();
     syncPatternToneInputs();
+    setupSavedBackgroundPresetControls();
 
     // Gradient angle slider
     bindSlider('gradient-angle', (val) => {
@@ -1854,6 +2510,167 @@
     syncBgTypeVisibility(state.background.type);
   }
 
+  function setupSavedBackgroundPresetControls() {
+    const select = document.getElementById('saved-bg-preset-select');
+    const applyBtn = document.getElementById('btn-apply-bg-preset');
+    const saveBtn = document.getElementById('btn-save-bg-preset');
+    const deleteBtn = document.getElementById('btn-delete-bg-preset');
+    const hint = document.getElementById('saved-bg-preset-hint');
+    if (!select || !applyBtn || !saveBtn || !deleteBtn) return;
+
+    const refreshList = () => {
+      const presets = getAllBackgroundPresets();
+      const previousValue = select.value;
+
+      select.innerHTML = '';
+      for (const preset of presets) {
+        const option = document.createElement('option');
+        option.value = preset.id;
+        option.textContent = preset.source === 'custom' ? `${preset.name} (Custom)` : preset.name;
+        select.appendChild(option);
+      }
+
+      if (presets.some((preset) => preset.id === previousValue)) {
+        select.value = previousValue;
+      }
+
+      if (!select.value && presets[0]) {
+        select.value = presets[0].id;
+      }
+
+      updateHint();
+    };
+
+    const updateHint = () => {
+      const active = getAllBackgroundPresets().find((preset) => preset.id === select.value);
+      const isCustom = !!active && active.source === 'custom';
+      deleteBtn.disabled = !isCustom;
+
+      if (!active) {
+        if (hint) hint.textContent = 'No saved background presets available yet.';
+        return;
+      }
+
+      if (hint) {
+        hint.textContent = isCustom
+          ? 'Custom preset stored locally in this browser and available after refresh.'
+          : 'Built-in Spendaily preset. Save your own by clicking Save current.';
+      }
+    };
+
+    applyBtn.addEventListener('click', () => {
+      const active = getAllBackgroundPresets().find((preset) => preset.id === select.value);
+      if (!active) return;
+      applyBackgroundPresetToState(state, active.background);
+      updateBackgroundUI();
+      requestRender();
+    });
+
+    saveBtn.addEventListener('click', () => {
+      const inputName = prompt('Name this background preset:');
+      const presetName = (inputName || '').trim();
+      if (!presetName) return;
+
+      const customPreset = {
+        id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        name: presetName.slice(0, 48),
+        source: 'custom',
+        background: serializeBackgroundPreset(state.background),
+      };
+
+      customBackgroundPresets.push(customPreset);
+      persistCustomBackgroundPresets();
+      refreshList();
+      select.value = customPreset.id;
+      updateHint();
+    });
+
+    deleteBtn.addEventListener('click', () => {
+      const activeId = select.value;
+      const active = customBackgroundPresets.find((preset) => preset.id === activeId);
+      if (!active) return;
+
+      const shouldDelete = confirm(`Delete custom background preset \"${active.name}\"?`);
+      if (!shouldDelete) return;
+
+      customBackgroundPresets = customBackgroundPresets.filter((preset) => preset.id !== activeId);
+      persistCustomBackgroundPresets();
+      refreshList();
+    });
+
+    select.addEventListener('change', updateHint);
+    refreshList();
+  }
+
+  function getAllBackgroundPresets() {
+    return [...BUILTIN_BACKGROUND_PRESETS, ...customBackgroundPresets];
+  }
+
+  function applyBackgroundPresetToState(targetState, backgroundPreset) {
+    if (!targetState || !backgroundPreset) return;
+    const merged = cloneBackgroundState({
+      ...targetState.background,
+      ...backgroundPreset,
+    });
+    targetState.background = merged;
+    targetState.background.type = backgroundPreset.type || targetState.background.type;
+  }
+
+  function serializeBackgroundPreset(rawBackground) {
+    const normalized = cloneBackgroundState(rawBackground);
+    return {
+      type: normalized.type,
+      colors: [...normalized.colors],
+      stops: [...normalized.stops],
+      angle: normalized.angle,
+      color: normalized.color,
+      patternId: normalized.patternId,
+      patternColors: [...normalized.patternColors],
+      patternIntensity: normalized.patternIntensity,
+      patternGrain: normalized.patternGrain,
+      meshColors: [...normalized.meshColors],
+      meshComplexity: normalized.meshComplexity,
+    };
+  }
+
+  function loadCustomBackgroundPresets() {
+    try {
+      const raw = localStorage.getItem(CUSTOM_BG_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+
+      return parsed
+        .map((item) => {
+          if (!item || typeof item !== 'object') return null;
+          const name = typeof item.name === 'string' && item.name.trim() ? item.name.trim().slice(0, 48) : 'Custom Preset';
+          const id = typeof item.id === 'string' && item.id ? item.id : `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          return {
+            id,
+            name,
+            source: 'custom',
+            background: serializeBackgroundPreset(item.background),
+          };
+        })
+        .filter(Boolean);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function persistCustomBackgroundPresets() {
+    try {
+      const payload = customBackgroundPresets.map((preset) => ({
+        id: preset.id,
+        name: preset.name,
+        background: serializeBackgroundPreset(preset.background),
+      }));
+      localStorage.setItem(CUSTOM_BG_STORAGE_KEY, JSON.stringify(payload));
+    } catch (_) {
+      // Ignore storage quota or browser privacy mode failures.
+    }
+  }
+
   // ==================== PHONE PANEL ====================
   function setupPhonePanel() {
     // Phone position sliders
@@ -2068,6 +2885,22 @@
       }
       exportImage();
     });
+
+    const exportAllBtn = document.getElementById('btn-export-all-variants');
+    if (exportAllBtn) {
+      exportAllBtn.addEventListener('click', async () => {
+        exportAllBtn.disabled = true;
+        const originalText = exportAllBtn.textContent;
+        exportAllBtn.textContent = 'Exporting...';
+
+        try {
+          await exportAllVariants();
+        } finally {
+          exportAllBtn.disabled = false;
+          exportAllBtn.textContent = originalText;
+        }
+      });
+    }
   }
 
   function exportImage() {
@@ -2093,28 +2926,122 @@
     }, 'image/png');
   }
 
+  async function exportAllVariants() {
+    if (!Array.isArray(variants) || variants.length === 0) return;
+
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+    if (!window.JSZip || typeof window.JSZip !== 'function') {
+      await downloadVariantsIndividually(timestamp);
+      return;
+    }
+
+    const zip = new window.JSZip();
+    const usedFileNames = new Set();
+    let addedCount = 0;
+
+    for (let i = 0; i < variants.length; i++) {
+      const variant = variants[i];
+      const blob = await exportStateAsBlob(variant.state);
+      if (!blob) continue;
+
+      const safeName = toFileSafeName(variant.name || `variant-${i + 1}`);
+      const baseFileName = `ad-${safeName}-${variant.state.canvasWidth}x${variant.state.canvasHeight}-${timestamp}.png`;
+      const uniqueFileName = getUniqueFileName(baseFileName, usedFileNames);
+      usedFileNames.add(uniqueFileName);
+
+      zip.file(uniqueFileName, blob);
+      addedCount += 1;
+    }
+
+    if (addedCount === 0) return;
+
+    const zipBlob = await zip.generateAsync({
+      type: 'blob',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    });
+
+    downloadBlob(zipBlob, `ad-variants-${timestamp}.zip`);
+  }
+
+  async function downloadVariantsIndividually(timestamp) {
+    for (let i = 0; i < variants.length; i++) {
+      const variant = variants[i];
+      const blob = await exportStateAsBlob(variant.state);
+      if (!blob) continue;
+
+      const safeName = toFileSafeName(variant.name || `variant-${i + 1}`);
+      downloadBlob(blob, `ad-${safeName}-${variant.state.canvasWidth}x${variant.state.canvasHeight}-${timestamp}.png`);
+    }
+  }
+
+  function getUniqueFileName(fileName, usedFileNames) {
+    if (!usedFileNames.has(fileName)) return fileName;
+
+    const dotIndex = fileName.lastIndexOf('.');
+    const hasExtension = dotIndex > 0;
+    const base = hasExtension ? fileName.slice(0, dotIndex) : fileName;
+    const ext = hasExtension ? fileName.slice(dotIndex) : '';
+
+    let index = 2;
+    while (true) {
+      const candidate = `${base}-${index}${ext}`;
+      if (!usedFileNames.has(candidate)) return candidate;
+      index += 1;
+    }
+  }
+
+  function exportStateAsBlob(renderState) {
+    return new Promise((resolve) => {
+      if (!renderState) {
+        resolve(null);
+        return;
+      }
+
+      const exportCanvas = document.createElement('canvas');
+      exportCanvas.width = renderState.canvasWidth;
+      exportCanvas.height = renderState.canvasHeight;
+      Renderer.render(exportCanvas, renderState);
+
+      exportCanvas.toBlob((blob) => {
+        resolve(blob || null);
+      }, 'image/png');
+    });
+  }
+
+  function downloadBlob(blob, fileName) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function toFileSafeName(input) {
+    return (input || 'variant')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40) || 'variant';
+  }
+
   // ==================== RESET ====================
   function setupReset() {
     document.getElementById('btn-reset').addEventListener('click', () => {
-      if (!confirm('Reset all settings to defaults?')) return;
-      state = createDefaultState();
-      setupCanvas();
-      renderTextLayers();
-      updateBackgroundUI();
-      updateLayoutSlidersUI();
-      selectLayout('single-center');
+      if (!confirm('Reset the active variant to defaults?')) return;
+      const freshState = createDefaultState();
+      const active = getActiveVariant();
 
-      // Reset upload previews
-      for (const num of [1, 2]) {
-        document.getElementById(`upload-preview-${num}`).src = '';
-        document.getElementById(`upload-preview-${num}`).classList.add('hidden');
-        document.getElementById(`upload-remove-${num}`).classList.add('hidden');
-        document.getElementById(`upload-placeholder-${num}`).classList.remove('hidden');
-        document.getElementById(`upload-zone-${num}`).classList.remove('has-image');
-        document.getElementById(`upload-input-${num}`).value = '';
+      if (active) {
+        active.state = freshState;
       }
 
-      document.getElementById('extracted-colors').classList.add('hidden');
+      state = freshState;
+      syncStateToUI();
+      renderVariantTabs();
       requestRender();
     });
   }

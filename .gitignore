@@ -1,0 +1,5 @@
+
+# Local secrets — never commit
+.kimi-key
+node_modules/
+.DS_Store

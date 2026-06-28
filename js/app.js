@@ -1,3136 +1,971 @@
 /**
- * App — Main application controller
- * Manages state, UI bindings, and orchestrates rendering
+ * Shotsmith app — single focused App Store screenshot creator.
+ * State is a list of "screens" (variant tabs); each screen is a full render state.
  */
-
-(function () {
+(() => {
   'use strict';
 
-  // ==================== FONTS ====================
-  const AVAILABLE_FONTS = [
-    'SF Pro Display', 'SF Pro Text',
-    'Inter', 'Poppins', 'Montserrat', 'DM Sans', 'Space Grotesk',
-    'Plus Jakarta Sans', 'Outfit', 'Sora', 'Nunito', 'Raleway',
-    'Manrope', 'Lexend', 'Figtree', 'Onest', 'Bricolage Grotesque',
-    'Rubik', 'Work Sans', 'Quicksand', 'Josefin Sans', 'Archivo',
-    'Source Sans 3', 'Cabin', 'Karla', 'Urbanist', 'Red Hat Display',
-    'Playfair Display',
+  const FONTS = [
+    'Poppins', 'Inter', 'DM Sans', 'Montserrat', 'Space Grotesk', 'Plus Jakarta Sans',
+    'Outfit', 'Sora', 'Nunito', 'Manrope', 'Lexend', 'Figtree', 'Onest',
+    'Bricolage Grotesque', 'Rubik', 'Work Sans', 'Urbanist', 'Red Hat Display', 'Fredoka',
   ];
+  const PILL_STYLE_CYCLE = ['solid', 'solid', 'glass', 'tint'];
+  const TILT_SEQ = [-3, 3, -2, 4, -4, 2, -3, 2];
+  const DEVICE_RES = { iphone: [1284, 2778], android: [1080, 2340] };
 
-  const FONT_WEIGHTS = [
-    { value: 300, label: 'Light' },
-    { value: 400, label: 'Regular' },
-    { value: 500, label: 'Medium' },
-    { value: 600, label: 'SemiBold' },
-    { value: 700, label: 'Bold' },
-    { value: 800, label: 'ExtraBold' },
-    { value: 900, label: 'Black' },
-  ];
+  let brand = null;
+  let screens = [];
+  let activeIndex = 0;
+  let device = 'iphone';
+  let selectedPillId = null;
+  let userZoom = 1;
+  let uid = 1;
+  let pillLibrary = []; // persisted, per-brand reusable pills
+  const nextId = () => `p${uid++}`;
 
-  // ==================== LAYOUT TEMPLATES ====================
-  // Categories: single, dual, bleed, float, perspective
-  const LAYOUTS = {
-    // ===== SINGLE PHONE =====
-    'single-center': {
-      name: 'Center',
-      category: 'single',
-      phones: [{ x: 0.5, y: 0.6, width: 0.55, rotation: 0 }],
-      textArea: { y: 0.06, height: 0.26 },
-    },
-    'single-top-peek': {
-      name: 'Top Peek',
-      category: 'single',
-      phones: [{ x: 0.5, y: 0.68, width: 0.58, rotation: 0 }],
-      textArea: { y: 0.05, height: 0.25 },
-    },
-    'single-large': {
-      name: 'Large',
-      category: 'single',
-      phones: [{ x: 0.5, y: 0.62, width: 0.65, rotation: 0 }],
-      textArea: { y: 0.04, height: 0.22 },
-    },
-    'tilt-left': {
-      name: 'Tilt Left',
-      category: 'single',
-      phones: [{ x: 0.5, y: 0.6, width: 0.55, rotation: -8 }],
-      textArea: { y: 0.06, height: 0.26 },
-    },
-    'tilt-right': {
-      name: 'Tilt Right',
-      category: 'single',
-      phones: [{ x: 0.5, y: 0.6, width: 0.55, rotation: 8 }],
-      textArea: { y: 0.06, height: 0.26 },
-    },
-    'offset-left': {
-      name: 'Left',
-      category: 'single',
-      phones: [{ x: 0.38, y: 0.62, width: 0.52, rotation: 0 }],
-      textArea: { y: 0.05, height: 0.28 },
-    },
-    'offset-right': {
-      name: 'Right',
-      category: 'single',
-      phones: [{ x: 0.62, y: 0.62, width: 0.52, rotation: 0 }],
-      textArea: { y: 0.05, height: 0.28 },
-    },
-    'single-small': {
-      name: 'Small',
-      category: 'single',
-      phones: [{ x: 0.5, y: 0.58, width: 0.42, rotation: 0 }],
-      textArea: { y: 0.06, height: 0.28 },
-    },
-    'single-hero': {
-      name: 'Hero',
-      category: 'single',
-      phones: [{ x: 0.5, y: 0.55, width: 0.72, rotation: 0 }],
-      textArea: { y: 0.03, height: 0.18 },
-    },
-    'single-tilt-gentle': {
-      name: 'Gentle Tilt',
-      category: 'single',
-      phones: [{ x: 0.5, y: 0.62, width: 0.55, rotation: -4 }],
-      textArea: { y: 0.06, height: 0.26 },
-    },
+  const $ = (id) => document.getElementById(id);
+  const canvas = $('canvas');
+  const ctx = canvas.getContext('2d');
+  const prevCanvas = $('canvas-prev');
+  const nextCanvas = $('canvas-next');
+  let showNeighbors = false;
 
-    // ===== DUAL PHONE =====
-    'dual-overlap': {
-      name: 'Overlap',
-      category: 'dual',
-      phones: [
-        { x: 0.35, y: 0.58, width: 0.48, rotation: -10 },
-        { x: 0.7, y: 0.65, width: 0.48, rotation: 5 },
-      ],
-      textArea: { y: 0.04, height: 0.22 },
-    },
-    'dual-side': {
-      name: 'Side by Side',
-      category: 'dual',
-      phones: [
-        { x: 0.3, y: 0.62, width: 0.4, rotation: 0 },
-        { x: 0.7, y: 0.62, width: 0.4, rotation: 0 },
-      ],
-      textArea: { y: 0.04, height: 0.22 },
-    },
-    'dual-stacked': {
-      name: 'Stacked',
-      category: 'dual',
-      phones: [
-        { x: 0.42, y: 0.56, width: 0.44, rotation: -5 },
-        { x: 0.58, y: 0.68, width: 0.44, rotation: 5 },
-      ],
-      textArea: { y: 0.04, height: 0.2 },
-    },
-    'dual-fan': {
-      name: 'Fan',
-      category: 'dual',
-      phones: [
-        { x: 0.38, y: 0.6, width: 0.45, rotation: -15 },
-        { x: 0.62, y: 0.6, width: 0.45, rotation: 15 },
-      ],
-      textArea: { y: 0.04, height: 0.22 },
-    },
-    'dual-cascade': {
-      name: 'Cascade',
-      category: 'dual',
-      phones: [
-        { x: 0.4, y: 0.52, width: 0.42, rotation: 0 },
-        { x: 0.6, y: 0.72, width: 0.42, rotation: 0 },
-      ],
-      textArea: { y: 0.04, height: 0.18 },
-    },
-    'dual-tight': {
-      name: 'Tight Pair',
-      category: 'dual',
-      phones: [
-        { x: 0.38, y: 0.6, width: 0.42, rotation: -3 },
-        { x: 0.62, y: 0.63, width: 0.42, rotation: 3 },
-      ],
-      textArea: { y: 0.04, height: 0.22 },
-    },
-    'dual-big-small': {
-      name: 'Big + Small',
-      category: 'dual',
-      phones: [
-        { x: 0.42, y: 0.58, width: 0.52, rotation: 0 },
-        { x: 0.72, y: 0.7, width: 0.35, rotation: 8 },
-      ],
-      textArea: { y: 0.04, height: 0.2 },
-    },
-
-    // ===== EDGE BLEED (phone extends beyond canvas) =====
-    'bleed-bottom': {
-      name: 'Bottom Bleed',
-      category: 'bleed',
-      phones: [{ x: 0.5, y: 0.75, width: 0.6, rotation: 0 }],
-      textArea: { y: 0.05, height: 0.3 },
-    },
-    'bleed-right': {
-      name: 'Right Bleed',
-      category: 'bleed',
-      phones: [{ x: 0.72, y: 0.6, width: 0.62, rotation: 0 }],
-      textArea: { y: 0.06, height: 0.26 },
-    },
-    'bleed-left': {
-      name: 'Left Bleed',
-      category: 'bleed',
-      phones: [{ x: 0.28, y: 0.6, width: 0.62, rotation: 0 }],
-      textArea: { y: 0.06, height: 0.26 },
-    },
-    'bleed-bottom-large': {
-      name: 'Bottom XL',
-      category: 'bleed',
-      phones: [{ x: 0.5, y: 0.78, width: 0.75, rotation: 0 }],
-      textArea: { y: 0.04, height: 0.3 },
-    },
-    'bleed-corner-right': {
-      name: 'Corner Right',
-      category: 'bleed',
-      phones: [{ x: 0.68, y: 0.75, width: 0.6, rotation: 8 }],
-      textArea: { y: 0.05, height: 0.28 },
-    },
-    'bleed-corner-left': {
-      name: 'Corner Left',
-      category: 'bleed',
-      phones: [{ x: 0.32, y: 0.75, width: 0.6, rotation: -8 }],
-      textArea: { y: 0.05, height: 0.28 },
-    },
-    'bleed-right-tilt': {
-      name: 'Right Tilt Out',
-      category: 'bleed',
-      phones: [{ x: 0.65, y: 0.65, width: 0.58, rotation: 12 }],
-      textArea: { y: 0.06, height: 0.26 },
-    },
-    'bleed-left-tilt': {
-      name: 'Left Tilt Out',
-      category: 'bleed',
-      phones: [{ x: 0.35, y: 0.65, width: 0.58, rotation: -12 }],
-      textArea: { y: 0.06, height: 0.26 },
-    },
-    'bleed-dual-spread': {
-      name: 'Spread Out',
-      category: 'bleed',
-      phones: [
-        { x: 0.22, y: 0.65, width: 0.5, rotation: -8 },
-        { x: 0.78, y: 0.65, width: 0.5, rotation: 8 },
-      ],
-      textArea: { y: 0.04, height: 0.25 },
-    },
-    'bleed-dual-bottom': {
-      name: 'Dual Bottom',
-      category: 'bleed',
-      phones: [
-        { x: 0.32, y: 0.78, width: 0.48, rotation: -5 },
-        { x: 0.68, y: 0.78, width: 0.48, rotation: 5 },
-      ],
-      textArea: { y: 0.04, height: 0.28 },
-    },
-    'bleed-overflow': {
-      name: 'Overflow',
-      category: 'bleed',
-      phones: [{ x: 0.5, y: 0.85, width: 0.7, rotation: 0 }],
-      textArea: { y: 0.04, height: 0.36 },
-    },
-    'bleed-peek-right': {
-      name: 'Peek Right',
-      category: 'bleed',
-      phones: [{ x: 0.8, y: 0.58, width: 0.55, rotation: -5 }],
-      textArea: { y: 0.05, height: 0.3 },
-    },
-
-    // ===== FLOATING (elevated, dramatic) =====
-    'float-center-high': {
-      name: 'High Float',
-      category: 'float',
-      phones: [{ x: 0.5, y: 0.52, width: 0.5, rotation: 0 }],
-      textArea: { y: 0.05, height: 0.18 },
-    },
-    'float-dramatic': {
-      name: 'Dramatic',
-      category: 'float',
-      phones: [{ x: 0.5, y: 0.55, width: 0.55, rotation: -12 }],
-      textArea: { y: 0.05, height: 0.2 },
-    },
-    'float-lean-left': {
-      name: 'Lean Left',
-      category: 'float',
-      phones: [{ x: 0.4, y: 0.56, width: 0.5, rotation: -18 }],
-      textArea: { y: 0.05, height: 0.22 },
-    },
-    'float-lean-right': {
-      name: 'Lean Right',
-      category: 'float',
-      phones: [{ x: 0.6, y: 0.56, width: 0.5, rotation: 18 }],
-      textArea: { y: 0.05, height: 0.22 },
-    },
-    'float-angled-pair': {
-      name: 'Angled Pair',
-      category: 'float',
-      phones: [
-        { x: 0.35, y: 0.55, width: 0.42, rotation: -20 },
-        { x: 0.65, y: 0.55, width: 0.42, rotation: 20 },
-      ],
-      textArea: { y: 0.04, height: 0.2 },
-    },
-    'float-v-shape': {
-      name: 'V-Shape',
-      category: 'float',
-      phones: [
-        { x: 0.32, y: 0.58, width: 0.4, rotation: -25 },
-        { x: 0.68, y: 0.58, width: 0.4, rotation: 25 },
-      ],
-      textArea: { y: 0.04, height: 0.22 },
-    },
-
-    // ===== PERSPECTIVE / 3D =====
-    'persp-left': {
-      name: 'Turn Left',
-      category: 'perspective',
-      phones: [{ x: 0.5, y: 0.6, width: 0.55, rotation: 0, perspective: 'left' }],
-      textArea: { y: 0.06, height: 0.26 },
-    },
-    'persp-right': {
-      name: 'Turn Right',
-      category: 'perspective',
-      phones: [{ x: 0.5, y: 0.6, width: 0.55, rotation: 0, perspective: 'right' }],
-      textArea: { y: 0.06, height: 0.26 },
-    },
-    'persp-left-strong': {
-      name: 'Deep Left',
-      category: 'perspective',
-      phones: [{ x: 0.5, y: 0.6, width: 0.55, rotation: 0, perspective: 'left-strong' }],
-      textArea: { y: 0.06, height: 0.26 },
-    },
-    'persp-right-strong': {
-      name: 'Deep Right',
-      category: 'perspective',
-      phones: [{ x: 0.5, y: 0.6, width: 0.55, rotation: 0, perspective: 'right-strong' }],
-      textArea: { y: 0.06, height: 0.26 },
-    },
-    'persp-iso-left': {
-      name: 'Iso Left',
-      category: 'perspective',
-      phones: [{ x: 0.5, y: 0.6, width: 0.52, rotation: 10, perspective: 'left' }],
-      textArea: { y: 0.06, height: 0.26 },
-    },
-    'persp-iso-right': {
-      name: 'Iso Right',
-      category: 'perspective',
-      phones: [{ x: 0.5, y: 0.6, width: 0.52, rotation: -10, perspective: 'right' }],
-      textArea: { y: 0.06, height: 0.26 },
-    },
-    'persp-flat': {
-      name: 'Flat Lay',
-      category: 'perspective',
-      phones: [{ x: 0.5, y: 0.6, width: 0.55, rotation: 0, perspective: 'flat' }],
-      textArea: { y: 0.04, height: 0.2 },
-    },
-    'persp-dual-showcase': {
-      name: 'Duo Showcase',
-      category: 'perspective',
-      phones: [
-        { x: 0.35, y: 0.6, width: 0.44, rotation: 0, perspective: 'left' },
-        { x: 0.65, y: 0.6, width: 0.44, rotation: 0, perspective: 'right' },
-      ],
-      textArea: { y: 0.04, height: 0.22 },
-    },
-  };
-
-  // ==================== GRADIENT PRESETS ====================
-  const GRADIENT_PRESETS = [
-    { name: 'Spendaily', colors: ['#5B9BD5', '#8B6DB5', '#D4779C'], angle: 180 },
-    { name: 'Ocean', colors: ['#667eea', '#764ba2'], angle: 135 },
-    { name: 'Sunset', colors: ['#fa709a', '#fee140'], angle: 135 },
-    { name: 'Mint', colors: ['#a8edea', '#fed6e3'], angle: 135 },
-    { name: 'Deep Sea', colors: ['#0f0c29', '#302b63', '#24243e'], angle: 180 },
-    { name: 'Peach', colors: ['#ffecd2', '#fcb69f'], angle: 135 },
-    { name: 'Cosmic', colors: ['#ff6a88', '#ff99ac', '#fcb045'], angle: 135 },
-    { name: 'Northern', colors: ['#43e97b', '#38f9d7'], angle: 135 },
-    { name: 'Royal', colors: ['#536976', '#292E49'], angle: 180 },
-    { name: 'Lavender', colors: ['#c471f5', '#fa71cd'], angle: 135 },
-    { name: 'Night Sky', colors: ['#0f2027', '#203a43', '#2c5364'], angle: 180 },
-    { name: 'Warm', colors: ['#f5af19', '#f12711'], angle: 135 },
-    { name: 'Berry', colors: ['#8E2DE2', '#4A00E0'], angle: 135 },
-    { name: 'Sky', colors: ['#89f7fe', '#66a6ff'], angle: 180 },
-    { name: 'Rose', colors: ['#eecda3', '#ef629f'], angle: 135 },
-    { name: 'Midnight', colors: ['#232526', '#414345'], angle: 180 },
-    { name: 'Aurora', colors: ['#56CCF2', '#2F80ED', '#6FCF97'], angle: 145 },
-    { name: 'Cherry Soda', colors: ['#ff4e50', '#f9d423'], angle: 135 },
-    { name: 'Indigo Dust', colors: ['#3f2b96', '#a8c0ff'], angle: 160 },
-    { name: 'Sea Glass', colors: ['#7de2d1', '#b8f2e6', '#faf3dd'], angle: 170 },
-    { name: 'Saffron Glow', colors: ['#f7971e', '#ffd200', '#ffecd2'], angle: 135 },
-    { name: 'Graphite', colors: ['#0f2027', '#203a43', '#2c5364'], angle: 180 },
-    { name: 'Blueberry Milk', colors: ['#8ec5fc', '#e0c3fc', '#fef9d7'], angle: 150 },
-    { name: 'Neon Tide', colors: ['#00c6ff', '#0072ff', '#9b23ea'], angle: 140 },
-    { name: 'Copper Rose', colors: ['#b76e79', '#d8a39d', '#f7d9c4'], angle: 160 },
-    { name: 'Emerald Night', colors: ['#0f5132', '#198754', '#74c69d'], angle: 155 },
-    { name: 'Frosted Lilac', colors: ['#d6cff0', '#e9d8fd', '#f7f7ff'], angle: 180 },
-    { name: 'Tangerine Pop', colors: ['#ff7e5f', '#feb47b', '#ffe29f'], angle: 135 },
-  ];
-
-  const CUSTOM_BG_STORAGE_KEY = 'ad-creator-custom-background-presets-v1';
-  const BUILTIN_BACKGROUND_PRESETS = [
-    {
-      id: 'builtin-lavender-flow',
-      name: 'Spendaily Lavender Flow',
-      source: 'builtin',
-      background: {
-        type: 'gradient',
-        colors: ['#BCA5E7', '#D4B4E6', '#F4D7D4'],
-        stops: [0, 0.52, 1],
-        angle: 162,
-      },
-    },
-    {
-      id: 'builtin-dawn-sky',
-      name: 'Spendaily Dawn Sky',
-      source: 'builtin',
-      background: {
-        type: 'gradient',
-        colors: ['#9BAEEB', '#BFA7E8', '#E3C2E4'],
-        stops: [0, 0.56, 1],
-        angle: 174,
-      },
-    },
-    {
-      id: 'builtin-ribbon-soft',
-      name: 'Spendaily Ribbon Soft',
-      source: 'builtin',
-      background: {
-        type: 'pattern',
-        patternId: 'pat-ribbon-layers',
-        patternColors: ['#A58BE4', '#D1BFF5', '#F1E9FF'],
-        patternIntensity: 70,
-        patternGrain: 6,
-      },
-    },
-    {
-      id: 'builtin-mesh-ledger',
-      name: 'Spendaily Mesh Ledger',
-      source: 'builtin',
-      background: {
-        type: 'mesh',
-        meshColors: ['#6E79D6', '#9283CA', '#C8A1DF', '#F0BFD8'],
-        meshComplexity: 5,
-      },
-    },
-  ];
-
-  // ==================== APPLICATION STATE ====================
-  let state = createDefaultState();
-  let variants = [];
-  let activeVariantId = null;
-  let customBackgroundPresets = loadCustomBackgroundPresets();
-
-  function createDefaultState() {
-    return {
-      canvasWidth: 1290,
-      canvasHeight: 2796,
-      screenshot: null,
-      screenshot2: null,
-      currentLayoutId: 'single-center',
-      currentLayout: LAYOUTS['single-center'],
-      background: {
-        type: 'gradient',
-        colors: ['#5B9BD5', '#8B6DB5', '#D4779C'],
-        stops: [0, 0.5, 1],
-        angle: 180,
-        color: '#1a1a2e',
-        patternId: 'pat-ribbon-layers',
-        patternColors: ['#8D7EDB', '#C5B8F0', '#ECE5FF'],
-        patternIntensity: 72,
-        patternGrain: 0,
-        meshColors: ['#667eea', '#764ba2', '#f093fb', '#4facfe'],
-        meshComplexity: 5,
-      },
-      phoneScale: 55,
-      phoneX: 50,
-      phoneY: 60,
-      phoneRotation: 0,
-      phonePerspective: '',
-      phone2Scale: 48,
-      phone2X: 70,
-      phone2Y: 65,
-      phone2Rotation: 5,
-      phone2Perspective: '',
-      phoneFrameColor: '#1C1C1E',
-      frameType: 'iphone',
-      phoneShadow: true,
-      shadowIntensity: 40,
-      shadowBlur: 60,
-      screenBrightness: 0,
-      screenRadius: 17,
-      texts: [
-        {
-          id: 1,
-          content: 'Know exactly what\nyou can spend today.',
-          font: 'Inter',
-          size: 96,
-          weight: 700,
-          color: '#FFFFFF',
-          x: 50, y: 7,
-          align: 'center',
-          lineHeight: 1.1,
-          maxWidth: 85,
-          letterSpacing: -1,
-          shadow: false,
-          shadowColor: 'rgba(0,0,0,0.3)',
-          shadowBlur: 10,
-          shadowOffsetX: 0,
-          shadowOffsetY: 4,
-        },
-        {
-          id: 2,
-          content: 'Stay in your monthly limit.',
-          font: 'Inter',
-          size: 52,
-          weight: 400,
-          color: '#FFFFFF',
-          x: 50, y: 25,
-          align: 'center',
-          lineHeight: 1.3,
-          maxWidth: 80,
-          letterSpacing: 0,
-          shadow: false,
-          shadowColor: 'rgba(0,0,0,0.2)',
-          shadowBlur: 8,
-          shadowOffsetX: 0,
-          shadowOffsetY: 3,
-        },
-      ],
-      nextTextId: 3,
-      extractedColors: [],
-      logo: null,
-      logoX: 50,
-      logoY: 90,
-      logoScale: 15,
-      logoOpacity: 100,
-    };
+  const screen = () => screens[activeIndex];
+  const activePhone = () => { const s = screen(); return s.phones[s.activePhone] || s.phones[0]; };
+  function defaultPhone(overrides = {}) {
+    return Object.assign({ id: `ph${uid++}`, show: true, scale: 55, x: 50, y: 62, rotation: 0, z: 0, shadow: true, shadowIntensity: 40, shadowBlur: 60, screenBrightness: 0, screenshot: null }, overrides);
   }
 
-  // ==================== DOM REFERENCES ====================
-  const canvas = document.getElementById('main-canvas');
-  const canvasWrapper = document.getElementById('canvas-wrapper');
-
-  const SNAP_THRESHOLD_PX = 12;
-  let canvasDragState = null;
-  let dragGuideLines = [];
-
-  // ==================== INITIALIZATION ====================
-  function init() {
-    setupCanvas();
-    setupVariantManager();
-    setupCanvasDrag();
-    setupUploadZones();
-    setupLayoutGrid();
-    setupTextPanel();
-    setupBackgroundPanel();
-    setupPhonePanel();
-    setupLogoPanel();
-    setupTabs();
-    setupNavigation();
-    setupExport();
-    setupReset();
-    setupZoom();
-    setupCanvasSize();
-    setupKeyboardShortcuts();
-
-    // Wait for fonts then render
-    document.fonts.ready.then(() => {
-      requestRender();
-    });
+  // ──────────────────────────────────────────────────────────────────────────
+  // Brand picker
+  // ──────────────────────────────────────────────────────────────────────────
+  function initBrandPicker() {
+    const grid = $('brand-grid');
+    const all = Object.values(window.BRANDS || {});
+    grid.innerHTML = '';
+    for (const b of all) {
+      const card = document.createElement('div');
+      card.className = 'brand-card';
+      card.innerHTML = `
+        <div class="bc-mark" style="background:linear-gradient(135deg,${b.logoGradient[0]},${b.logoGradient[1]})">${b.logoChar || b.name[0]}</div>
+        <div class="bc-name">${b.name}</div>
+        <div class="bc-tag">${b.tagline}</div>`;
+      card.addEventListener('click', () => chooseBrand(b));
+      grid.appendChild(card);
+    }
+    const soon = document.createElement('div');
+    soon.className = 'brand-card soon';
+    soon.innerHTML = `<div class="bc-mark" style="background:#2a2a36">+</div><div class="bc-name">Add a brand</div><div class="bc-tag">Drop a blueprint to add your own.</div>`;
+    grid.appendChild(soon);
   }
 
-  // ==================== CANVAS SETUP ====================
-  function setupCanvas() {
-    canvas.width = state.canvasWidth;
-    canvas.height = state.canvasHeight;
+  async function chooseBrand(b) {
+    brand = b;
+    $('brand-overlay').classList.add('hidden');
+    $('app').classList.remove('hidden');
+    $('active-brand-name').textContent = b.name;
+    $('active-brand-dot').style.background = `linear-gradient(135deg,${b.logoGradient[0]},${b.logoGradient[1]})`;
+    document.querySelector('.brand-chip').title = b.tagline;
+
+    screens = b.screens.map((def) => buildScreen(def));
+    activeIndex = 0;
+
+    initFontSelects();
+    initPaletteGrid();
+    initGradientPresets();
+    buildPanelStaticBindings();
+    Renderer.setAssetLoadCallback(() => requestRender());
+    Kimi.setBrand(b); // loads blueprint in the background
+    pillLibrary = loadLibrary();
+
+    await document.fonts.ready.catch(() => {});
+    setDevice(device, true);
+    renderScreenTabs();
+    syncAllPanels();
+    renderLibrary();
+    fitCanvas();
     requestRender();
   }
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // Screen construction
+  // ──────────────────────────────────────────────────────────────────────────
+  function themeFor(mode, accent, accent2) {
+    const t = brand.theme;
+    return {
+      mode: mode || 'light',
+      accent: accent || t.accent,
+      accent2: accent2 || t.accent2,
+      headlineBase: t.headlineBase,
+      headlineBaseDark: t.headlineBaseDark,
+      headlineAccent: accent || t.accent,
+      subtitle: t.subtitle,
+      subtitleDark: t.subtitleDark,
+      eyebrow: t.eyebrow,
+      eyebrowDark: '#C4B5FD',
+    };
+  }
+
+  function buildScreen(def) {
+    const mode = def.theme || 'light';
+    const s = {
+      id: `s${uid++}`,
+      name: def.name || 'Screen',
+      screenNote: def.screenNote || '',
+      theme: themeFor(mode),
+      fonts: { ...brand.fonts },
+      background: { ...JSON.parse(JSON.stringify(def.bg || brand.gradients.lavender)), glow: true },
+      header: {
+        show: true,
+        y: 0.05,
+        eyebrow: { text: def.eyebrow || '', show: !!def.eyebrow, size: 30 },
+        headline: {
+          show: true, size: 116, weight: 800, tracking: -1, lineHeight: 1.04,
+          lines: (def.headline || []).map((l) => ({ text: l.text, accent: !!l.accent })),
+        },
+        accentBar: { show: true, width: 64, height: 7 },
+        subtitle: { text: def.subtitle || '', show: !!def.subtitle, size: 46, maxWidth: 0.78, weight: 500 },
+      },
+      phones: [defaultPhone()],
+      activePhone: 0,
+      pills: [],
+    };
+    const feats = (def.pills || []).map((p, i) => makePill(p, i));
+    if (def.rating) feats.push({ id: nextId(), kind: 'rating', stars: def.rating.stars || 5, label: def.rating.label || '', style: 'solid', x: 0.5, y: 0.30, rotation: 0, scale: 1 });
+    s.pills = feats;
+    arrangePills(s);
+    return s;
+  }
+
+  function makePill(p, i) {
+    return {
+      id: nextId(), kind: 'feature',
+      emoji: p.emoji || '✨', title: p.title || '', subtitle: p.subtitle || '',
+      style: p.style || PILL_STYLE_CYCLE[i % PILL_STYLE_CYCLE.length],
+      x: 0.5, y: 0.5, rotation: 0, scale: 1,
+    };
+  }
+
+  function arrangePills(s) {
+    const rating = s.pills.find((p) => p.kind === 'rating');
+    const feats = s.pills.filter((p) => p.kind !== 'rating');
+    if (rating) { rating.x = 0.5; rating.y = 0.305; rating.rotation = 0; }
+    const left = [], right = [];
+    feats.forEach((p, i) => (i % 2 === 0 ? left : right).push(p));
+    const band = [0.40, 0.90];
+    const place = (list, x) => {
+      list.forEach((p, j) => {
+        const t = list.length > 1 ? j / (list.length - 1) : 0.5;
+        p.x = x;
+        p.y = band[0] + t * (band[1] - band[0]);
+        p.rotation = TILT_SEQ[(j + (x < 0.5 ? 0 : 4)) % TILT_SEQ.length];
+      });
+    };
+    place(left, 0.17);
+    place(right, 0.83);
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Pill library (persisted per brand; reusable; feeds Kimi's "avoid" list)
+  // ──────────────────────────────────────────────────────────────────────────
+  const libStorageKey = () => `shotsmith:pills:${brand.id}`;
+  function loadLibrary() { try { return JSON.parse(localStorage.getItem(libStorageKey()) || '[]'); } catch { return []; } }
+  function persistLibrary() { try { localStorage.setItem(libStorageKey(), JSON.stringify(pillLibrary)); } catch { /* storage full / unavailable */ } }
+  function libKey(p) { return `${(p.title || '').trim().toLowerCase()}|${(p.subtitle || '').trim().toLowerCase()}`; }
+  function isInLibrary(p) { return pillLibrary.some((x) => libKey(x) === libKey(p)); }
+
+  function addToLibrary(pills) {
+    const seen = new Set(pillLibrary.map(libKey));
+    let added = 0;
+    for (const p of pills) {
+      if (!p || p.kind === 'rating' || !p.title) continue;
+      const item = { emoji: p.emoji || '✨', title: p.title, subtitle: p.subtitle || '' };
+      const k = libKey(item);
+      if (seen.has(k)) continue;
+      seen.add(k); pillLibrary.unshift(item); added++;
+    }
+    if (added) persistLibrary();
+    return added;
+  }
+  function removeFromLibrary(k) { pillLibrary = pillLibrary.filter((p) => libKey(p) !== k); persistLibrary(); renderLibrary(); renderPillList(); }
+  function clearLibrary() {
+    if (!pillLibrary.length) return;
+    if (!confirm('Clear all saved pills for this brand?')) return;
+    pillLibrary = []; persistLibrary(); renderLibrary(); renderPillList();
+  }
+
+  // Titles Kimi should not repeat: everything saved + everything on this screen.
+  function avoidTitles() {
+    const set = new Set();
+    pillLibrary.forEach((p) => p.title && set.add(p.title));
+    if (screens.length) screen().pills.forEach((p) => p.kind !== 'rating' && p.title && set.add(p.title));
+    return Array.from(set).slice(0, 120);
+  }
+
+  function renderLibrary() {
+    const grid = $('lib-grid');
+    if (!grid) return;
+    $('lib-count').textContent = pillLibrary.length ? `(${pillLibrary.length})` : '';
+    $('lib-empty').classList.toggle('hidden', pillLibrary.length > 0);
+    grid.innerHTML = '';
+    pillLibrary.forEach((p) => {
+      const chip = document.createElement('div');
+      chip.className = 'lib-chip';
+      chip.title = `${p.title}${p.subtitle ? ' — ' + p.subtitle : ''}\nClick to add to this screen`;
+      chip.innerHTML = `<span class="lc-emoji">${escapeHtml(p.emoji || '✨')}</span><span class="lc-title">${escapeHtml(p.title)}</span><span class="lc-x" title="Remove from library">×</span>`;
+      chip.addEventListener('click', (e) => {
+        if (e.target.classList.contains('lc-x')) { removeFromLibrary(libKey(p)); return; }
+        addPillFromLibrary(p);
+      });
+      grid.appendChild(chip);
+    });
+  }
+
+  function addPillFromLibrary(p) {
+    const pill = makePill({ emoji: p.emoji, title: p.title, subtitle: p.subtitle }, screen().pills.length);
+    pill.x = 0.2; pill.y = 0.46;
+    screen().pills.push(pill); selectedPillId = pill.id;
+    renderPillList(); requestRender(); toast('Pill added — drag to place');
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Rendering
+  // ──────────────────────────────────────────────────────────────────────────
+  // Render screens[index] to a canvas, giving the renderer its neighbours so a
+  // phone bleeding off one screen continues onto the adjacent one.
+  function renderScreenTo(canvasEl, index, extra = {}) {
+    const s = screens[index];
+    if (!s) return;
+    s.device = device;
+    const prev = screens[index - 1] || null;
+    const next = screens[index + 1] || null;
+    if (prev) prev.device = device;
+    if (next) next.device = device;
+    Renderer.render(canvasEl, s, { prev, next, ...extra });
+  }
+
   let renderPending = false;
+  let neighborTimer = null;
   function requestRender() {
     if (renderPending) return;
     renderPending = true;
     requestAnimationFrame(() => {
       renderPending = false;
-      Renderer.render(canvas, state);
-      drawDragGuides();
-    });
-  }
-
-  // ==================== VARIANTS ====================
-  function setupVariantManager() {
-    variants = [{
-      id: createVariantId(),
-      name: 'Ad 1',
-      state,
-    }];
-    activeVariantId = variants[0].id;
-    renderVariantTabs();
-
-    const newBtn = document.getElementById('btn-new-variant');
-    if (newBtn) {
-      newBtn.addEventListener('click', () => {
-        const newVariantState = cloneStateForVariant(state);
-        addVariant(getNextDefaultVariantName(), newVariantState, true);
-      });
-    }
-  }
-
-  function createVariantId() {
-    return `variant-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  }
-
-  function getNextDefaultVariantName() {
-    const usedNames = new Set(variants.map((item) => item.name));
-    let index = 1;
-    while (usedNames.has(`Ad ${index}`)) {
-      index += 1;
-    }
-    return `Ad ${index}`;
-  }
-
-  function getActiveVariant() {
-    return variants.find((item) => item.id === activeVariantId) || null;
-  }
-
-  function addVariant(name, nextState, activate = false) {
-    const normalizedState = normalizeStateForEditing(nextState || createDefaultState());
-    const variant = {
-      id: createVariantId(),
-      name: name || `Ad ${variants.length + 1}`,
-      state: normalizedState,
-    };
-    variants.push(variant);
-    renderVariantTabs();
-    if (activate) switchToVariant(variant.id);
-    return variant;
-  }
-
-  function switchToVariant(variantId) {
-    const nextVariant = variants.find((item) => item.id === variantId);
-    if (!nextVariant) return;
-
-    activeVariantId = variantId;
-    state = normalizeStateForEditing(nextVariant.state);
-    nextVariant.state = state;
-
-    renderVariantTabs();
-    syncStateToUI();
-    requestRender();
-  }
-
-  function removeVariant(variantId) {
-    if (variants.length <= 1) return;
-    const index = variants.findIndex((item) => item.id === variantId);
-    if (index === -1) return;
-
-    const wasActive = activeVariantId === variantId;
-    variants.splice(index, 1);
-
-    if (wasActive) {
-      const fallback = variants[Math.max(0, index - 1)] || variants[0];
-      switchToVariant(fallback.id);
-      return;
-    }
-
-    renderVariantTabs();
-  }
-
-  function renderVariantTabs() {
-    const container = document.getElementById('variant-tabs');
-    if (!container) return;
-    container.innerHTML = '';
-
-    const canRemove = variants.length > 1;
-
-    for (const variant of variants) {
-      const tab = document.createElement('button');
-      tab.type = 'button';
-      tab.className = `variant-tab${variant.id === activeVariantId ? ' active' : ''}`;
-      tab.dataset.variantId = variant.id;
-
-      const name = document.createElement('span');
-      name.className = 'variant-tab-name';
-      name.textContent = variant.name;
-      tab.appendChild(name);
-
-      const closeBtn = document.createElement('button');
-      closeBtn.type = 'button';
-      closeBtn.className = 'variant-tab-close';
-      closeBtn.textContent = '×';
-      closeBtn.title = 'Remove variant';
-      if (!canRemove) closeBtn.classList.add('hidden');
-
-      closeBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        removeVariant(variant.id);
-      });
-
-      tab.appendChild(closeBtn);
-      tab.addEventListener('click', () => switchToVariant(variant.id));
-      container.appendChild(tab);
-    }
-  }
-
-  function cloneStateForVariant(sourceState) {
-    const source = normalizeStateForEditing(sourceState || createDefaultState());
-    return normalizeStateForEditing({
-      ...source,
-      background: cloneBackgroundState(source.background),
-      texts: source.texts.map((item) => ({ ...item })),
-      extractedColors: Array.isArray(source.extractedColors)
-        ? source.extractedColors.map((item) => ({ ...item }))
-        : [],
-    });
-  }
-
-  function normalizeStateForEditing(rawState) {
-    const defaults = createDefaultState();
-    const nextState = {
-      ...defaults,
-      ...rawState,
-    };
-
-    nextState.currentLayoutId = nextState.currentLayoutId in LAYOUTS ? nextState.currentLayoutId : 'single-center';
-    nextState.currentLayout = LAYOUTS[nextState.currentLayoutId];
-    nextState.background = cloneBackgroundState(nextState.background);
-    nextState.texts = Array.isArray(nextState.texts)
-      ? nextState.texts.map((item) => ({ ...item }))
-      : defaults.texts.map((item) => ({ ...item }));
-
-    const maxTextId = nextState.texts.reduce((maxId, item) => {
-      return Math.max(maxId, Number.isFinite(item.id) ? item.id : 0);
-    }, 0);
-    nextState.nextTextId = Number.isFinite(nextState.nextTextId) ? Math.max(nextState.nextTextId, maxTextId + 1) : maxTextId + 1;
-
-    return nextState;
-  }
-
-  function cloneBackgroundState(rawBackground) {
-    const fallback = createDefaultState().background;
-    const background = {
-      ...fallback,
-      ...(rawBackground || {}),
-    };
-
-    background.colors = Array.isArray(background.colors) && background.colors.length > 0 ? [...background.colors] : [...fallback.colors];
-    background.stops = Array.isArray(background.stops) && background.stops.length === background.colors.length
-      ? [...background.stops]
-      : background.colors.map((_, index) => index / Math.max(1, background.colors.length - 1));
-    background.patternColors = Array.isArray(background.patternColors) && background.patternColors.length > 0
-      ? [...background.patternColors]
-      : [...fallback.patternColors];
-    background.meshColors = Array.isArray(background.meshColors) && background.meshColors.length > 0
-      ? [...background.meshColors]
-      : [...fallback.meshColors];
-
-    return background;
-  }
-
-  function syncStateToUI() {
-    setupCanvas();
-
-    const info = document.getElementById('canvas-info');
-    if (info) info.textContent = `${state.canvasWidth} × ${state.canvasHeight} px`;
-
-    const sizeSelect = document.getElementById('canvas-size');
-    const sizeValue = `${state.canvasWidth}x${state.canvasHeight}`;
-    if (sizeSelect && Array.from(sizeSelect.options).some((option) => option.value === sizeValue)) {
-      sizeSelect.value = sizeValue;
-    }
-
-    renderLayoutGrid(activeCat);
-    syncDualControlsVisibility();
-    updateLayoutSlidersUI();
-    renderTextLayers();
-    updateBackgroundUI();
-    syncPhonePanelUI();
-    syncLogoPanelUI();
-    syncUploadUI();
-    syncExtractedColorsUI();
-  }
-
-  function syncDualControlsVisibility() {
-    const dualControls = document.getElementById('dual-controls');
-    if (!dualControls) return;
-    const isDual = state.currentLayout && Array.isArray(state.currentLayout.phones) && state.currentLayout.phones.length > 1;
-    dualControls.classList.toggle('hidden', !isDual);
-  }
-
-  function syncPhonePanelUI() {
-    setSliderValue('phone-scale', state.phoneScale, `${state.phoneScale}%`);
-    setSliderValue('phone-y', state.phoneY, `${state.phoneY}%`);
-    setSliderValue('phone-x', state.phoneX, `${state.phoneX}%`);
-    setSliderValue('phone-rotation', state.phoneRotation, `${state.phoneRotation}°`);
-    setSliderValue('phone2-scale', state.phone2Scale, `${state.phone2Scale}%`);
-    setSliderValue('phone2-y', state.phone2Y, `${state.phone2Y}%`);
-    setSliderValue('phone2-x', state.phone2X, `${state.phone2X}%`);
-    setSliderValue('phone2-rotation', state.phone2Rotation, `${state.phone2Rotation}°`);
-    setSliderValue('shadow-intensity', state.shadowIntensity, `${state.shadowIntensity}%`);
-    setSliderValue('shadow-blur', state.shadowBlur, `${state.shadowBlur}`);
-    setSliderValue('screen-brightness', state.screenBrightness, `${state.screenBrightness}`);
-
-    const phoneShadowToggle = document.getElementById('phone-shadow');
-    if (phoneShadowToggle) phoneShadowToggle.checked = !!state.phoneShadow;
-
-    document.querySelectorAll('.frame-type-btn').forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.frameType === state.frameType);
-    });
-  }
-
-  function syncLogoPanelUI() {
-    setSliderValue('logo-scale', state.logoScale, `${state.logoScale}%`);
-    setSliderValue('logo-x', state.logoX, `${state.logoX}%`);
-    setSliderValue('logo-y', state.logoY, `${state.logoY}%`);
-    setSliderValue('logo-opacity', state.logoOpacity, `${state.logoOpacity}%`);
-
-    const zone = document.getElementById('logo-upload-zone');
-    const preview = document.getElementById('logo-upload-preview');
-    const placeholder = document.getElementById('logo-upload-placeholder');
-    const removeBtn = document.getElementById('logo-upload-remove');
-
-    if (!zone || !preview || !placeholder || !removeBtn) return;
-
-    if (state.logo && state.logo.src) {
-      preview.src = state.logo.src;
-      preview.classList.remove('hidden');
-      removeBtn.classList.remove('hidden');
-      placeholder.classList.add('hidden');
-      zone.classList.add('has-image');
-    } else {
-      preview.src = '';
-      preview.classList.add('hidden');
-      removeBtn.classList.add('hidden');
-      placeholder.classList.remove('hidden');
-      zone.classList.remove('has-image');
-    }
-  }
-
-  function syncUploadUI() {
-    syncSingleUploadUI(1, state.screenshot);
-    syncSingleUploadUI(2, state.screenshot2);
-  }
-
-  function syncSingleUploadUI(num, image) {
-    const preview = document.getElementById(`upload-preview-${num}`);
-    const placeholder = document.getElementById(`upload-placeholder-${num}`);
-    const removeBtn = document.getElementById(`upload-remove-${num}`);
-    const zone = document.getElementById(`upload-zone-${num}`);
-    const input = document.getElementById(`upload-input-${num}`);
-    if (!preview || !placeholder || !removeBtn || !zone || !input) return;
-
-    if (image && image.src) {
-      preview.src = image.src;
-      preview.classList.remove('hidden');
-      removeBtn.classList.remove('hidden');
-      placeholder.classList.add('hidden');
-      zone.classList.add('has-image');
-    } else {
-      preview.src = '';
-      preview.classList.add('hidden');
-      removeBtn.classList.add('hidden');
-      placeholder.classList.remove('hidden');
-      zone.classList.remove('has-image');
-    }
-
-    input.value = '';
-  }
-
-  function syncExtractedColorsUI() {
-    const container = document.getElementById('extracted-colors');
-    if (!container) return;
-    if (Array.isArray(state.extractedColors) && state.extractedColors.length > 0) {
-      showExtractedColors(state.extractedColors);
-      return;
-    }
-    container.classList.add('hidden');
-  }
-
-  function setupCanvasDrag() {
-    if (!canvas) return;
-    canvas.classList.add('canvas-draggable');
-    canvas.addEventListener('pointerdown', onCanvasPointerDown);
-    canvas.addEventListener('pointermove', onCanvasPointerMove);
-    canvas.addEventListener('pointerup', onCanvasPointerUp);
-    canvas.addEventListener('pointercancel', onCanvasPointerUp);
-    canvas.addEventListener('pointerleave', () => {
-      if (!canvasDragState) canvas.style.cursor = 'default';
-    });
-  }
-
-  function onCanvasPointerDown(e) {
-    const point = toCanvasPoint(e);
-    const hit = getTopmostHit(point.x, point.y);
-    if (!hit) {
-      updateCanvasCursor(point);
-      return;
-    }
-
-    canvasDragState = {
-      pointerId: e.pointerId,
-      itemId: hit.id,
-      itemType: hit.type,
-      grabDx: point.x - hit.cx,
-      grabDy: point.y - hit.cy,
-    };
-
-    dragGuideLines = [];
-    canvas.classList.add('is-dragging');
-    canvas.style.cursor = 'grabbing';
-    if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
-    e.preventDefault();
-  }
-
-  function onCanvasPointerMove(e) {
-    const point = toCanvasPoint(e);
-
-    if (!canvasDragState || canvasDragState.pointerId !== e.pointerId) {
-      updateCanvasCursor(point);
-      return;
-    }
-
-    const nextCx = point.x - canvasDragState.grabDx;
-    const nextCy = point.y - canvasDragState.grabDy;
-    const didMove = applyDraggedPosition(canvasDragState.itemId, nextCx, nextCy);
-    if (didMove) requestRender();
-    e.preventDefault();
-  }
-
-  function onCanvasPointerUp(e) {
-    if (!canvasDragState || canvasDragState.pointerId !== e.pointerId) return;
-
-    const draggedType = canvasDragState.itemType;
-
-    if (canvas.releasePointerCapture && canvas.hasPointerCapture && canvas.hasPointerCapture(e.pointerId)) {
-      canvas.releasePointerCapture(e.pointerId);
-    }
-
-    canvasDragState = null;
-    dragGuideLines = [];
-    canvas.classList.remove('is-dragging');
-    updateCanvasCursor(toCanvasPoint(e));
-
-    if (draggedType === 'text') updateTextUI();
-    requestRender();
-  }
-
-  function toCanvasPoint(e) {
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    return {
-      x: (e.clientX - rect.left) * scaleX,
-      y: (e.clientY - rect.top) * scaleY,
-    };
-  }
-
-  function updateCanvasCursor(point) {
-    if (canvasDragState) {
-      canvas.style.cursor = 'grabbing';
-      return;
-    }
-    if (!point) {
-      canvas.style.cursor = 'default';
-      return;
-    }
-    const hit = getTopmostHit(point.x, point.y);
-    canvas.style.cursor = hit ? 'grab' : 'default';
-  }
-
-  function getTopmostHit(x, y) {
-    const items = getDraggableItems();
-    for (let i = items.length - 1; i >= 0; i--) {
-      const item = items[i];
-      if (x >= item.left && x <= item.right && y >= item.top && y <= item.bottom) {
-        return item;
-      }
-    }
-    return null;
-  }
-
-  function getDraggableItems() {
-    const items = [];
-    const W = canvas.width;
-    const H = canvas.height;
-
-    if (state.currentLayout && Array.isArray(state.currentLayout.phones)) {
-      for (let i = 0; i < state.currentLayout.phones.length; i++) {
-        const isPrimary = i === 0;
-        const phoneScale = isPrimary ? state.phoneScale : state.phone2Scale;
-        const phoneX = isPrimary ? state.phoneX : state.phone2X;
-        const phoneY = isPrimary ? state.phoneY : state.phone2Y;
-        const frameType = state.frameType || 'iphone';
-        const phoneAspect = Renderer.getPhoneAspectRatio
-          ? Renderer.getPhoneAspectRatio(frameType)
-          : Renderer.PHONE_W_TO_H;
-
-        const w = W * (phoneScale / 100);
-        const h = w / phoneAspect;
-        const cx = W * (phoneX / 100);
-        const cy = H * (phoneY / 100);
-
-        items.push({
-          id: isPrimary ? 'phone-1' : 'phone-2',
-          type: 'phone',
-          index: i,
-          cx,
-          cy,
-          w,
-          h,
-          left: cx - w / 2,
-          right: cx + w / 2,
-          top: cy - h / 2,
-          bottom: cy + h / 2,
-        });
-      }
-    }
-
-    for (const text of state.texts) {
-      const bounds = measureTextBounds(text, W, H);
-      if (!bounds) continue;
-      items.push({
-        id: `text-${text.id}`,
-        type: 'text',
-        textId: text.id,
-        ...bounds,
-      });
-    }
-
-    if (state.logo) {
-      const img = state.logo;
-      const imgW = img.naturalWidth || img.width;
-      const imgH = img.naturalHeight || img.height;
-      if (imgW > 0 && imgH > 0) {
-        const ratio = imgW / imgH;
-        const w = W * ((state.logoScale || 15) / 100);
-        const h = w / ratio;
-        const cx = W * (state.logoX / 100);
-        const cy = H * (state.logoY / 100);
-        items.push({
-          id: 'logo',
-          type: 'logo',
-          cx,
-          cy,
-          w,
-          h,
-          left: cx - w / 2,
-          right: cx + w / 2,
-          top: cy - h / 2,
-          bottom: cy + h / 2,
-        });
-      }
-    }
-
-    return items;
-  }
-
-  function measureTextBounds(text, canvasW, canvasH) {
-    if (!text.content || text.content.trim() === '') return null;
-
-    const ctx = canvas.getContext('2d');
-    const fontSize = text.size || 72;
-    const fontWeight = text.weight || 700;
-    const fontFamily = text.font || 'Inter';
-    const align = text.align || 'center';
-    const lineHeight = text.lineHeight || 1.15;
-    const maxWidth = (text.maxWidth / 100) * canvasW || canvasW * 0.85;
-    const letterSpacing = text.letterSpacing || 0;
-    const posX = (text.x / 100) * canvasW;
-    const posY = (text.y / 100) * canvasH;
-
-    ctx.save();
-    ctx.font = `${fontWeight} ${fontSize}px "${fontFamily}", "SF Pro Display", -apple-system, system-ui, sans-serif`;
-
-    const paragraphs = text.content.split('\n');
-    const lines = [];
-    for (const paragraph of paragraphs) {
-      const wrapped = wrapTextForBounds(ctx, paragraph, maxWidth);
-      for (const line of wrapped) lines.push(line);
-    }
-    if (lines.length === 0) lines.push('');
-
-    let minX = Number.POSITIVE_INFINITY;
-    let maxX = Number.NEGATIVE_INFINITY;
-    let currentY = posY;
-    for (const line of lines) {
-      const lineWidth = measureLineWidth(ctx, line, letterSpacing);
-      let startX = posX;
-      if (align === 'center') startX = posX - lineWidth / 2;
-      else if (align === 'right') startX = posX - lineWidth;
-      minX = Math.min(minX, startX);
-      maxX = Math.max(maxX, startX + lineWidth);
-      currentY += fontSize * lineHeight;
-    }
-
-    ctx.restore();
-
-    const width = Math.max(1, maxX - minX);
-    const height = Math.max(1, currentY - posY);
-    const cx = minX + width / 2;
-    const cy = posY + height / 2;
-
-    return {
-      cx,
-      cy,
-      w: width,
-      h: height,
-      left: minX,
-      right: minX + width,
-      top: posY,
-      bottom: posY + height,
-    };
-  }
-
-  function wrapTextForBounds(ctx, text, maxWidth) {
-    if (!text) return [''];
-    const words = text.split(' ');
-    const lines = [];
-    let currentLine = '';
-
-    for (const word of words) {
-      const testLine = currentLine ? `${currentLine} ${word}` : word;
-      if (ctx.measureText(testLine).width > maxWidth && currentLine) {
-        lines.push(currentLine);
-        currentLine = word;
-      } else {
-        currentLine = testLine;
-      }
-    }
-
-    if (currentLine) lines.push(currentLine);
-    if (lines.length === 0) lines.push('');
-    return lines;
-  }
-
-  function measureLineWidth(ctx, text, spacing) {
-    if (!text) return 0;
-    if (!spacing) return ctx.measureText(text).width;
-
-    let width = 0;
-    for (let i = 0; i < text.length; i++) {
-      width += ctx.measureText(text[i]).width;
-      if (i < text.length - 1) width += spacing;
-    }
-    return width;
-  }
-
-  function applyDraggedPosition(itemId, proposedCx, proposedCy) {
-    const items = getDraggableItems();
-    const activeItem = items.find((item) => item.id === itemId);
-    if (!activeItem) return false;
-
-    const others = items.filter((item) => item.id !== itemId);
-    const snapped = snapToGuides(activeItem, proposedCx, proposedCy, others, canvas.width, canvas.height);
-    let xPct = (snapped.cx / canvas.width) * 100;
-    let yPct = (snapped.cy / canvas.height) * 100;
-
-    if (activeItem.type === 'phone') {
-      if (activeItem.index === 0) {
-        const [minX, maxX] = getSliderBounds('phone-x', 0, 100);
-        const [minY, maxY] = getSliderBounds('phone-y', 0, 100);
-        state.phoneX = roundToStep(clamp(xPct, minX, maxX), 0.1);
-        state.phoneY = roundToStep(clamp(yPct, minY, maxY), 0.1);
-      } else {
-        const [minX, maxX] = getSliderBounds('phone2-x', 0, 100);
-        const [minY, maxY] = getSliderBounds('phone2-y', 0, 100);
-        state.phone2X = roundToStep(clamp(xPct, minX, maxX), 0.1);
-        state.phone2Y = roundToStep(clamp(yPct, minY, maxY), 0.1);
-      }
-      syncDraggedControls('phone', activeItem.index);
-    } else if (activeItem.type === 'text') {
-      const target = state.texts.find((text) => `text-${text.id}` === itemId);
-      if (target) {
-        target.x = roundToStep(clamp(xPct, 5, 95), 0.1);
-        target.y = roundToStep(clamp(yPct, 0, 90), 0.1);
-      }
-    } else if (activeItem.type === 'logo') {
-      const [minX, maxX] = getSliderBounds('logo-x', 0, 100);
-      const [minY, maxY] = getSliderBounds('logo-y', 0, 100);
-      state.logoX = roundToStep(clamp(xPct, minX, maxX), 0.1);
-      state.logoY = roundToStep(clamp(yPct, minY, maxY), 0.1);
-      syncDraggedControls('logo');
-    }
-
-    dragGuideLines = snapped.guides;
-    return true;
-  }
-
-  function snapToGuides(activeItem, cx, cy, otherItems, W, H) {
-    const xCandidates = [W / 2];
-    const yCandidates = [H / 2];
-    for (const item of otherItems) {
-      xCandidates.push(item.left, item.cx, item.right);
-      yCandidates.push(item.top, item.cy, item.bottom);
-    }
-
-    const xPoints = [cx - activeItem.w / 2, cx, cx + activeItem.w / 2];
-    const yPoints = [cy - activeItem.h / 2, cy, cy + activeItem.h / 2];
-
-    const bestX = findBestSnap(xPoints, xCandidates);
-    if (bestX) cx += bestX.delta;
-    const bestY = findBestSnap(yPoints, yCandidates);
-    if (bestY) cy += bestY.delta;
-
-    const guides = [];
-    if (bestX) guides.push({ axis: 'x', value: bestX.line });
-    if (bestY) guides.push({ axis: 'y', value: bestY.line });
-
-    return { cx, cy, guides };
-  }
-
-  function findBestSnap(points, guideLines) {
-    let best = null;
-    for (const point of points) {
-      for (const line of guideLines) {
-        const delta = line - point;
-        const dist = Math.abs(delta);
-        if (dist > SNAP_THRESHOLD_PX) continue;
-        if (!best || dist < best.dist) {
-          best = { delta, line, dist };
-        }
-      }
-    }
-    return best;
-  }
-
-  function getSliderBounds(id, fallbackMin, fallbackMax) {
-    const slider = document.getElementById(id);
-    if (!slider) return [fallbackMin, fallbackMax];
-    const min = Number.isFinite(parseFloat(slider.min)) ? parseFloat(slider.min) : fallbackMin;
-    const max = Number.isFinite(parseFloat(slider.max)) ? parseFloat(slider.max) : fallbackMax;
-    return [min, max];
-  }
-
-  function syncDraggedControls(type, index = 0) {
-    if (type === 'phone' && index === 0) {
-      setSliderValue('phone-x', state.phoneX, `${state.phoneX}%`);
-      setSliderValue('phone-y', state.phoneY, `${state.phoneY}%`);
-      return;
-    }
-    if (type === 'phone' && index === 1) {
-      setSliderValue('phone2-x', state.phone2X, `${state.phone2X}%`);
-      setSliderValue('phone2-y', state.phone2Y, `${state.phone2Y}%`);
-      return;
-    }
-    if (type === 'logo') {
-      setSliderValue('logo-x', state.logoX, `${state.logoX}%`);
-      setSliderValue('logo-y', state.logoY, `${state.logoY}%`);
-    }
-  }
-
-  function drawDragGuides() {
-    if (!dragGuideLines || dragGuideLines.length === 0) return;
-
-    const ctx = canvas.getContext('2d');
-    const W = canvas.width;
-    const H = canvas.height;
-
-    ctx.save();
-    ctx.strokeStyle = 'rgba(125, 211, 252, 0.95)';
-    ctx.lineWidth = Math.max(1, Math.round(Math.min(W, H) * 0.0016));
-    ctx.setLineDash([10, 6]);
-
-    for (const guide of dragGuideLines) {
-      if (guide.axis === 'x') {
-        ctx.beginPath();
-        ctx.moveTo(guide.value, 0);
-        ctx.lineTo(guide.value, H);
-        ctx.stroke();
-      } else {
-        ctx.beginPath();
-        ctx.moveTo(0, guide.value);
-        ctx.lineTo(W, guide.value);
-        ctx.stroke();
-      }
-    }
-
-    ctx.restore();
-  }
-
-  function clamp(value, min, max) {
-    return Math.max(min, Math.min(max, value));
-  }
-
-  function roundToStep(value, step) {
-    return Math.round(value / step) * step;
-  }
-
-  // ==================== UPLOAD ZONES ====================
-  function setupUploadZones() {
-    setupSingleUpload(1);
-    setupSingleUpload(2);
-    setupBulkVariantCreator();
-
-    // Auto theme button
-    document.getElementById('btn-auto-theme').addEventListener('click', () => {
-      if (!state.screenshot) return;
-      applyAutoTheme();
-    });
-  }
-
-  function setupSingleUpload(num) {
-    const zone = document.getElementById(`upload-zone-${num}`);
-    const input = document.getElementById(`upload-input-${num}`);
-    const preview = document.getElementById(`upload-preview-${num}`);
-    const placeholder = document.getElementById(`upload-placeholder-${num}`);
-    const removeBtn = document.getElementById(`upload-remove-${num}`);
-
-    zone.addEventListener('click', (e) => {
-      if (e.target === removeBtn) return;
-      input.click();
-    });
-
-    zone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      zone.classList.add('drag-over');
-    });
-
-    zone.addEventListener('dragleave', () => {
-      zone.classList.remove('drag-over');
-    });
-
-    zone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      zone.classList.remove('drag-over');
-      const file = e.dataTransfer.files[0];
-      if (file && file.type.startsWith('image/')) {
-        loadImageFile(file, num);
+      if (!screens[activeIndex]) return;
+      renderScreenTo(canvas, activeIndex, { selectedPillId });
+      // A change to this screen's phone changes the neighbour continuations,
+      // so refresh them (debounced; skipped while dragging a pill).
+      if (showNeighbors && !drag) {
+        clearTimeout(neighborTimer);
+        neighborTimer = setTimeout(() => { if (showNeighbors) renderNeighbors(); }, 90);
       }
     });
+  }
 
-    input.addEventListener('change', () => {
-      const file = input.files[0];
-      if (file) loadImageFile(file, num);
+  function setDevice(d, silent) {
+    device = d;
+    const [w, h] = DEVICE_RES[d];
+    canvas.width = w; canvas.height = h;
+    document.querySelectorAll('[data-device]').forEach((b) => b.classList.toggle('active', b.dataset.device === d));
+    $('res-label').textContent = `${w} × ${h}`;
+    $('canvas-dims').textContent = `${w} × ${h} px`;
+    fitCanvas();
+    if (!silent) requestRender();
+    if (showNeighbors) renderNeighbors();
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Canvas fit + zoom + pill drag
+  // ──────────────────────────────────────────────────────────────────────────
+  function fitCanvas() {
+    const host = $('canvas-host');
+    const pad = 44;
+    const availW = host.clientWidth - pad, availH = host.clientHeight - pad;
+    const fit = Math.min(availW / canvas.width, availH / canvas.height);
+    const scale = Math.max(0.05, fit * userZoom);
+    const w = `${canvas.width * scale}px`, h = `${canvas.height * scale}px`;
+    [canvas, prevCanvas, nextCanvas].forEach((c) => { c.style.width = w; c.style.height = h; });
+    $('zoom-level').textContent = userZoom === 1 ? 'Fit' : `${Math.round(userZoom * 100)}%`;
+  }
+
+  // Render the previous/next screens flanking the current one (bleed preview).
+  function renderNeighbors() {
+    $('filmstrip').classList.toggle('has-neighbors', showNeighbors);
+    prevCanvas.style.display = showNeighbors ? '' : 'none';
+    nextCanvas.style.display = showNeighbors ? '' : 'none';
+    if (showNeighbors) {
+      paintNeighbor(prevCanvas, activeIndex - 1);
+      paintNeighbor(nextCanvas, activeIndex + 1);
+    }
+    fitCanvas();
+  }
+  function paintNeighbor(c, index) {
+    c.width = canvas.width; c.height = canvas.height;
+    c.getContext('2d').clearRect(0, 0, c.width, c.height);
+    if (index < 0 || index >= screens.length) { c.classList.add('empty'); return; }
+    c.classList.remove('empty');
+    renderScreenTo(c, index);
+  }
+
+  function canvasPoint(e) {
+    const r = canvas.getBoundingClientRect();
+    return { x: (e.clientX - r.left) / r.width * canvas.width, y: (e.clientY - r.top) / r.height * canvas.height };
+  }
+
+  let drag = null;
+  function setupCanvasInteraction() {
+    canvas.addEventListener('pointerdown', (e) => {
+      const pt = canvasPoint(e);
+      const rects = Renderer.getPillRects(canvas.width, canvas.height, screen());
+      let hit = null;
+      for (let i = rects.length - 1; i >= 0; i--) { if (Renderer.hitTestPill(pt.x, pt.y, rects[i])) { hit = rects[i]; break; } }
+      if (hit) {
+        selectedPillId = hit.id;
+        const p = screen().pills.find((x) => x.id === hit.id);
+        drag = { id: hit.id, dx: pt.x / canvas.width - p.x, dy: pt.y / canvas.height - p.y };
+        canvas.classList.add('dragging');
+        canvas.setPointerCapture(e.pointerId);
+        renderPillList();
+        requestRender();
+      } else if (selectedPillId) {
+        selectedPillId = null; renderPillList(); requestRender();
+      }
     });
-
-    removeBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (num === 1) state.screenshot = null;
-      else state.screenshot2 = null;
-      preview.src = '';
-      preview.classList.add('hidden');
-      removeBtn.classList.add('hidden');
-      placeholder.classList.remove('hidden');
-      zone.classList.remove('has-image');
-      input.value = '';
+    canvas.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const pt = canvasPoint(e);
+      const p = screen().pills.find((x) => x.id === drag.id);
+      if (!p) return;
+      p.x = Math.max(0.02, Math.min(0.98, pt.x / canvas.width - drag.dx));
+      p.y = Math.max(0.02, Math.min(0.98, pt.y / canvas.height - drag.dy));
       requestRender();
     });
+    const end = () => { if (drag) { drag = null; canvas.classList.remove('dragging'); } };
+    canvas.addEventListener('pointerup', end);
+    canvas.addEventListener('pointercancel', end);
+
+    $('zoom-in').addEventListener('click', () => { userZoom = Math.min(2, userZoom + 0.15); fitCanvas(); });
+    $('zoom-out').addEventListener('click', () => { userZoom = Math.max(0.4, userZoom - 0.15); fitCanvas(); });
+    $('zoom-level').addEventListener('click', () => { userZoom = 1; fitCanvas(); });
+    window.addEventListener('resize', fitCanvas);
   }
 
-  function setupBulkVariantCreator() {
-    const list = document.getElementById('bulk-preset-checklist');
-    const fileInput = document.getElementById('bulk-screenshots-input');
-    const createBtn = document.getElementById('btn-bulk-create-variants');
-    const selectAllBtn = document.getElementById('btn-bulk-select-all');
-    const clearBtn = document.getElementById('btn-bulk-clear');
-    const hint = document.getElementById('bulk-create-hint');
-    if (!list || !fileInput || !createBtn) return;
-
-    const presets = getSharedTextPresets();
-    list.innerHTML = '';
-
-    for (const preset of presets) {
-      const label = document.createElement('label');
-      label.className = 'bulk-preset-item';
-
-      const check = document.createElement('input');
-      check.type = 'checkbox';
-      check.value = String(preset.number);
-
-      const copy = document.createElement('div');
-      copy.className = 'bulk-preset-copy';
-
-      const title = document.createElement('div');
-      title.className = 'bulk-preset-title';
-      title.textContent = `Preset text ${preset.number}`;
-
-      const sub = document.createElement('div');
-      sub.className = 'bulk-preset-sub';
-      sub.textContent = `${preset.hero} | ${preset.subtext}`;
-
-      copy.appendChild(title);
-      copy.appendChild(sub);
-      label.appendChild(check);
-      label.appendChild(copy);
-      list.appendChild(label);
-    }
-
-    if (selectAllBtn) {
-      selectAllBtn.addEventListener('click', () => {
-        list.querySelectorAll('input[type="checkbox"]').forEach((input) => {
-          input.checked = true;
-        });
+  // ──────────────────────────────────────────────────────────────────────────
+  // Screen tabs
+  // ──────────────────────────────────────────────────────────────────────────
+  function renderScreenTabs() {
+    const wrap = $('screen-tabs');
+    wrap.innerHTML = '';
+    screens.forEach((s, i) => {
+      const tab = document.createElement('div');
+      tab.className = `screen-tab${i === activeIndex ? ' active' : ''}`;
+      tab.innerHTML = `<span class="st-name">${i + 1}. ${escapeHtml(s.name)}</span>`;
+      const close = document.createElement('span');
+      close.className = 'st-close'; close.textContent = '×';
+      close.addEventListener('click', (e) => { e.stopPropagation(); removeScreen(i); });
+      tab.appendChild(close);
+      tab.querySelector('.st-name').addEventListener('dblclick', () => {
+        const name = prompt('Screen name', s.name);
+        if (name) { s.name = name; renderScreenTabs(); }
       });
-    }
+      tab.addEventListener('click', () => switchScreen(i));
+      wrap.appendChild(tab);
+    });
+    const add = document.createElement('button');
+    add.className = 'screen-tab-add'; add.textContent = '+'; add.title = 'Add screen';
+    add.addEventListener('click', addScreen);
+    wrap.appendChild(add);
+  }
 
-    if (clearBtn) {
-      clearBtn.addEventListener('click', () => {
-        list.querySelectorAll('input[type="checkbox"]').forEach((input) => {
-          input.checked = false;
-        });
-      });
-    }
+  function switchScreen(i) {
+    activeIndex = i; selectedPillId = null;
+    renderScreenTabs(); syncAllPanels(); requestRender();
+    if (showNeighbors) renderNeighbors();
+  }
+  function addScreen() {
+    const blank = buildScreen({ name: `Screen ${screens.length + 1}`, eyebrow: '', theme: 'light', bg: brand.gradients.lavender, headline: [{ text: 'New headline', accent: false }, { text: 'second line', accent: true }], subtitle: 'A calm one-line subtitle.', pills: [] });
+    screens.push(blank); switchScreen(screens.length - 1);
+  }
+  function duplicateScreen() {
+    const src = screen();
+    const copy = JSON.parse(JSON.stringify(src)); // Image objects don't survive JSON
+    copy.id = `s${uid++}`; copy.name = `${src.name} copy`;
+    copy.phones.forEach((p, i) => { p.id = `ph${uid++}`; p.screenshot = src.phones[i] ? src.phones[i].screenshot : null; });
+    copy.pills.forEach((p) => (p.id = nextId()));
+    screens.splice(activeIndex + 1, 0, copy);
+    switchScreen(activeIndex + 1);
+  }
+  function removeScreen(i) {
+    if (screens.length === 1) { toast('Keep at least one screen', true); return; }
+    screens.splice(i, 1);
+    if (activeIndex >= screens.length) activeIndex = screens.length - 1;
+    selectedPillId = null;
+    renderScreenTabs(); syncAllPanels(); requestRender();
+  }
 
-    createBtn.addEventListener('click', async () => {
-      const selectedNumbers = Array.from(list.querySelectorAll('input[type="checkbox"]:checked'))
-        .map((input) => parseInt(input.value, 10))
-        .filter((value) => Number.isFinite(value));
+  // ──────────────────────────────────────────────────────────────────────────
+  // Panels — static bindings (once)
+  // ──────────────────────────────────────────────────────────────────────────
+  function buildPanelStaticBindings() {
+    // panel tabs
+    document.querySelectorAll('.ptab').forEach((t) => t.addEventListener('click', () => {
+      document.querySelectorAll('.ptab').forEach((x) => x.classList.remove('active'));
+      document.querySelectorAll('.ppanel').forEach((x) => x.classList.remove('active'));
+      t.classList.add('active');
+      document.querySelector(`.ppanel[data-panel="${t.dataset.tab}"]`).classList.add('active');
+    }));
 
-      if (selectedNumbers.length === 0) {
-        if (hint) hint.textContent = 'Select at least one text preset to create variants.';
-        return;
+    // device toggles (topbar + device panel)
+    document.querySelectorAll('[data-device]').forEach((b) => b.addEventListener('click', () => setDevice(b.dataset.device)));
+
+    // topbar actions
+    $('btn-add-screen').addEventListener('click', addScreen);
+    $('btn-duplicate-screen').addEventListener('click', duplicateScreen);
+    $('btn-export').addEventListener('click', exportCurrent);
+    $('btn-export-all').addEventListener('click', exportAll);
+
+    // ---- Text panel ----
+    bindCheckbox('header-show', (v) => { screen().header.show = v; });
+    bindInput('eyebrow-text', (v) => { screen().header.eyebrow.text = v; });
+    bindCheckbox('eyebrow-show', (v) => { screen().header.eyebrow.show = v; });
+    $('btn-add-line').addEventListener('click', () => { screen().header.headline.lines.push({ text: 'New line', accent: true }); renderHeadlineLines(); requestRender(); });
+    bindRange('headline-size', (v) => { screen().header.headline.size = +v; });
+    bindSelect('headline-weight', (v) => { screen().header.headline.weight = +v; });
+    bindCheckbox('bar-show', (v) => { screen().header.accentBar.show = v; });
+    bindInput('subtitle-text', (v) => { screen().header.subtitle.text = v; screen().header.subtitle.show = !!v; });
+    bindRange('header-y', (v) => { screen().header.y = +v / 100; });
+    bindCheckbox('theme-dark', (v) => { screen().theme.mode = v ? 'dark' : 'light'; });
+
+    // ---- Pills panel ----
+    $('btn-add-pill').addEventListener('click', () => {
+      const p = makePill({ emoji: '✨', title: 'New pill', subtitle: 'subtitle' }, screen().pills.length);
+      p.x = 0.2; p.y = 0.5;
+      screen().pills.push(p); selectedPillId = p.id; renderPillList(); requestRender();
+    });
+    $('btn-add-rating').addEventListener('click', () => {
+      const p = { id: nextId(), kind: 'rating', stars: 5, label: 'Loved by everyday budgeters', style: 'solid', x: 0.5, y: 0.3, rotation: 0, scale: 1 };
+      screen().pills.push(p); selectedPillId = p.id; renderPillList(); requestRender();
+    });
+    $('btn-arrange-pills').addEventListener('click', () => { arrangePills(screen()); renderPillList(); requestRender(); });
+    $('pills-ai').addEventListener('click', aiPills);
+    $('lib-clear').addEventListener('click', clearLibrary);
+
+    // ---- Style panel ----
+    document.querySelectorAll('#bg-type-seg .seg-btn').forEach((b) => b.addEventListener('click', () => {
+      document.querySelectorAll('#bg-type-seg .seg-btn').forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      const type = b.dataset.bg;
+      const bg = screen().background;
+      bg.type = type;
+      if (type === 'solid' && !bg.color) bg.color = '#EDE6FB';
+      if (type === 'mesh' && !bg.meshColors) bg.meshColors = (bg.colors || ['#EDE6FB', '#FBE6DD']).concat(['#E9E2FB', '#F3E0F0']).slice(0, 4);
+      $('bg-gradient-controls').classList.toggle('hidden', type !== 'gradient');
+      $('bg-solid-controls').classList.toggle('hidden', type !== 'solid');
+      syncStylePanel(); requestRender();
+    }));
+    bindRange('grad-angle', (v) => { screen().background.angle = +v; });
+    bindColor('solid-color', (v) => { screen().background.color = v; });
+    bindCheckbox('bg-glow', (v) => { screen().background.glow = v; });
+
+    // ---- Device panel ---- (controls target the active phone on this screen)
+    bindCheckbox('phone-show', (v) => { activePhone().show = v; });
+    bindRange('phone-scale', (v) => { activePhone().scale = +v; $('v-scale').textContent = `${v}%`; });
+    bindRange('phone-x', (v) => { activePhone().x = +v; $('v-x').textContent = `${v}%`; });
+    bindRange('phone-y', (v) => { activePhone().y = +v; $('v-y').textContent = `${v}%`; });
+    bindRange('phone-rotation', (v) => { activePhone().rotation = +v; $('v-rot').textContent = `${v}°`; });
+    const bumpLayer = (d) => { const p = activePhone(); p.z = (p.z || 0) + d; $('v-z').textContent = p.z; requestRender(); if (showNeighbors) renderNeighbors(); };
+    $('phone-front').addEventListener('click', () => bumpLayer(1));
+    $('phone-back').addEventListener('click', () => bumpLayer(-1));
+    bindCheckbox('phone-shadow', (v) => { activePhone().shadow = v; });
+    bindRange('shadow-intensity', (v) => { activePhone().shadowIntensity = +v; $('v-shadow').textContent = `${v}%`; });
+    bindRange('shadow-blur', (v) => { activePhone().shadowBlur = +v; $('v-blur').textContent = v; });
+    setupUpload();
+    $('btn-clear-shot').addEventListener('click', () => { activePhone().screenshot = null; syncDeviceControls(); requestRender(); if (showNeighbors) renderNeighbors(); });
+
+    // Add / remove phone mockups
+    $('btn-add-phone').addEventListener('click', () => {
+      const s = screen();
+      const maxZ = Math.max(0, ...s.phones.map((p) => p.z || 0));
+      s.phones.push(defaultPhone({ x: 72, scale: 48, rotation: 4, z: maxZ + 1 }));
+      s.activePhone = s.phones.length - 1;
+      renderPhoneTabs(); syncDeviceControls(); requestRender(); if (showNeighbors) renderNeighbors();
+    });
+
+    // Bleed presets + neighbour preview
+    document.querySelectorAll('[data-bleed]').forEach((b) => b.addEventListener('click', () => {
+      const mode = b.dataset.bleed;
+      const x = mode === 'left' ? 4 : mode === 'right' ? 96 : 50;
+      activePhone().x = x;
+      $('phone-x').value = x; $('v-x').textContent = `${x}%`;
+      requestRender();
+      if (showNeighbors) renderNeighbors();
+    }));
+    $('show-neighbors').addEventListener('change', () => { showNeighbors = $('show-neighbors').checked; renderNeighbors(); });
+    $('match-prev-bg').addEventListener('click', () => {
+      const prev = screens[activeIndex - 1];
+      if (!prev) { toast('No previous screen to match', true); return; }
+      const s = screen();
+      s.background = JSON.parse(JSON.stringify(prev.background));
+      s.theme = JSON.parse(JSON.stringify(prev.theme));
+      s._paletteId = prev._paletteId;
+      syncStylePanel();
+      $('theme-dark').checked = s.theme.mode === 'dark';
+      requestRender();
+      if (showNeighbors) renderNeighbors();
+      toast('Matched previous screen background');
+    });
+
+    // ---- Fonts panel ----
+    bindSelect('font-display', (v) => { screen().fonts.display = v; updateFontPreview(); });
+    bindSelect('font-body', (v) => { screen().fonts.body = v; updateFontPreview(); });
+    $('fonts-ai').addEventListener('click', aiFonts);
+
+    // ---- AI panel ----
+    $('ai-copy').addEventListener('click', aiCopy);
+    $('ai-pills').addEventListener('click', aiPills);
+    $('ai-fonts').addEventListener('click', aiFonts);
+    $('ai-set').addEventListener('click', aiSet);
+  }
+
+  // generic binders — write to current screen then re-render
+  function bindInput(id, fn) { $(id).addEventListener('input', () => { fn($(id).value); requestRender(); }); }
+  function bindRange(id, fn) { $(id).addEventListener('input', () => { fn($(id).value); requestRender(); }); }
+  function bindSelect(id, fn) { $(id).addEventListener('change', () => { fn($(id).value); requestRender(); }); }
+  function bindCheckbox(id, fn) { $(id).addEventListener('change', () => { fn($(id).checked); requestRender(); }); }
+  function bindColor(id, fn) { $(id).addEventListener('input', () => { fn($(id).value); requestRender(); }); }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Panel sync (when switching screens)
+  // ──────────────────────────────────────────────────────────────────────────
+  function syncAllPanels() {
+    const s = screen();
+    $('header-show').checked = s.header.show !== false;
+    $('eyebrow-text').value = s.header.eyebrow.text || '';
+    $('eyebrow-show').checked = s.header.eyebrow.show !== false;
+    renderHeadlineLines();
+    $('headline-size').value = s.header.headline.size;
+    $('headline-weight').value = s.header.headline.weight;
+    $('bar-show').checked = s.header.accentBar.show !== false;
+    $('subtitle-text').value = s.header.subtitle.text || '';
+    $('header-y').value = Math.round((s.header.y || 0.05) * 100);
+    $('theme-dark').checked = s.theme.mode === 'dark';
+
+    renderPillList();
+
+    syncStylePanel();
+
+    renderPhoneTabs();
+    syncDeviceControls();
+
+    $('font-display').value = s.fonts.display;
+    $('font-body').value = s.fonts.body;
+    updateFontPreview();
+
+    $('ai-brief').value = s.screenNote || '';
+  }
+
+  // Per-screen list of phone mockups (each has its own screenshot)
+  function renderPhoneTabs() {
+    const wrap = $('phone-tabs');
+    if (!wrap) return;
+    const s = screen();
+    wrap.innerHTML = '';
+    s.phones.forEach((p, i) => {
+      const chip = document.createElement('div');
+      chip.className = `phone-tab${i === s.activePhone ? ' active' : ''}`;
+      chip.innerHTML = `<span>Phone ${i + 1}${p.screenshot ? ' •' : ''}</span>`;
+      if (s.phones.length > 1) {
+        const x = document.createElement('span');
+        x.className = 'pt-close'; x.textContent = '×';
+        x.addEventListener('click', (e) => { e.stopPropagation(); removePhone(i); });
+        chip.appendChild(x);
       }
+      chip.addEventListener('click', () => { s.activePhone = i; renderPhoneTabs(); syncDeviceControls(); });
+      wrap.appendChild(chip);
+    });
+  }
+  function removePhone(i) {
+    const s = screen();
+    if (s.phones.length <= 1) return;
+    s.phones.splice(i, 1);
+    if (s.activePhone >= s.phones.length) s.activePhone = s.phones.length - 1;
+    renderPhoneTabs(); syncDeviceControls(); requestRender(); if (showNeighbors) renderNeighbors();
+  }
+  function syncDeviceControls() {
+    const p = activePhone();
+    $('phone-show').checked = p.show !== false;
+    $('phone-scale').value = p.scale; $('v-scale').textContent = `${p.scale}%`;
+    $('phone-x').value = p.x; $('v-x').textContent = `${p.x}%`;
+    $('phone-y').value = p.y; $('v-y').textContent = `${p.y}%`;
+    $('phone-rotation').value = p.rotation; $('v-rot').textContent = `${p.rotation}°`;
+    $('v-z').textContent = p.z || 0;
+    $('phone-shadow').checked = p.shadow !== false;
+    $('shadow-intensity').value = p.shadowIntensity; $('v-shadow').textContent = `${p.shadowIntensity}%`;
+    $('shadow-blur').value = p.shadowBlur; $('v-blur').textContent = p.shadowBlur;
+    const hasImg = !!p.screenshot;
+    $('upload-zone').classList.toggle('has-img', hasImg);
+    $('upload-zone').querySelector('span').textContent = hasImg ? 'Screenshot loaded · click to replace' : 'Drop screen here · or click';
+  }
 
-      createBtn.disabled = true;
-      const originalText = createBtn.textContent;
-      createBtn.textContent = 'Creating...';
-
-      try {
-        const files = Array.from(fileInput.files || []);
-        const screenshots = await Promise.all(files.map(async (file) => ({
-          file,
-          image: await loadImageFromFile(file),
-        })));
-        const usedVariantNames = new Set(variants.map((item) => item.name));
-
-        const created = [];
-        for (let i = 0; i < selectedNumbers.length; i++) {
-          const number = selectedNumbers[i];
-          const preset = presets.find((item) => item.number === number);
-          if (!preset) continue;
-
-          const nextState = cloneStateForVariant(state);
-          applyTextPresetToState(nextState, preset);
-
-          const screenshotEntry = screenshots[i] || screenshots[0] || null;
-          if (screenshotEntry && screenshotEntry.image) {
-            nextState.screenshot = screenshotEntry.image;
-            applyAutoThemeToState(nextState);
-          }
-
-          const variantName = buildBulkVariantName(preset, screenshotEntry ? screenshotEntry.file : null, usedVariantNames);
-          const createdVariant = addVariant(variantName, nextState, false);
-          usedVariantNames.add(createdVariant.name);
-          created.push(createdVariant.id);
-        }
-
-        if (created.length > 0) {
-          switchToVariant(created[0]);
-          if (hint) hint.textContent = `${created.length} variants created. Each one is now available as a tab above the canvas.`;
-        }
-      } catch (error) {
-        if (hint) hint.textContent = 'Could not read one of the screenshot files. Please try with different files.';
-      } finally {
-        createBtn.disabled = false;
-        createBtn.textContent = originalText;
-      }
+  function renderHeadlineLines() {
+    const wrap = $('headline-lines');
+    wrap.innerHTML = '';
+    const lines = screen().header.headline.lines;
+    lines.forEach((ln, i) => {
+      const row = document.createElement('div');
+      row.className = 'hl-line';
+      const input = document.createElement('input');
+      input.type = 'text'; input.className = 'input'; input.value = ln.text;
+      input.addEventListener('input', () => { ln.text = input.value; requestRender(); });
+      const acc = document.createElement('button');
+      acc.className = `hl-accent${ln.accent ? ' on' : ''}`; acc.textContent = 'A'; acc.title = 'Accent colour';
+      acc.addEventListener('click', () => { ln.accent = !ln.accent; acc.classList.toggle('on', ln.accent); requestRender(); });
+      const del = document.createElement('button');
+      del.className = 'hl-del'; del.textContent = '×';
+      del.addEventListener('click', () => { lines.splice(i, 1); renderHeadlineLines(); requestRender(); });
+      row.append(input, acc, del);
+      wrap.appendChild(row);
     });
   }
 
-  function loadImageFromFile(file) {
-    return new Promise((resolve, reject) => {
-      if (!file || !file.type || !file.type.startsWith('image/')) {
-        reject(new Error('Invalid image file'));
-        return;
+  function renderPillList() {
+    const wrap = $('pill-list');
+    wrap.innerHTML = '';
+    screen().pills.forEach((p) => {
+      const row = document.createElement('div');
+      row.className = `pill-row${p.id === selectedPillId ? ' sel' : ''}${p.kind === 'rating' ? ' rating-row' : ''}`;
+      if (p.kind === 'rating') {
+        row.innerHTML = `
+          <div class="pr-top">
+            <input class="input pr-emoji" value="${p.stars}" type="number" min="1" max="5" title="Stars">
+            <input class="input pr-title" value="${escapeAttr(p.label)}" placeholder="Rating label">
+            <button class="pr-del" title="Delete">×</button>
+          </div>`;
+        row.querySelector('.pr-emoji').addEventListener('input', (e) => { p.stars = Math.max(1, Math.min(5, +e.target.value || 5)); requestRender(); });
+        row.querySelector('.pr-title').addEventListener('input', (e) => { p.label = e.target.value; requestRender(); });
+      } else {
+        row.innerHTML = `
+          <div class="pr-top">
+            <input class="input pr-emoji" value="${escapeAttr(p.emoji)}" title="Emoji">
+            <input class="input pr-title" value="${escapeAttr(p.title)}" placeholder="Title">
+            <button class="pr-save${isInLibrary(p) ? ' saved' : ''}" title="Save to library">${isInLibrary(p) ? '★' : '☆'}</button>
+            <button class="pr-del" title="Delete">×</button>
+          </div>
+          <input class="input pr-sub" value="${escapeAttr(p.subtitle)}" placeholder="Subtitle (optional)">
+          <div class="pr-meta">
+            <select class="pr-style">
+              ${['solid', 'glass', 'tint'].map((st) => `<option value="${st}"${p.style === st ? ' selected' : ''}>${st}</option>`).join('')}
+            </select>
+            <select class="pr-rot"></select>
+          </div>`;
+        const saveBtn = row.querySelector('.pr-save');
+        const refreshSave = () => { const inLib = isInLibrary(p); saveBtn.classList.toggle('saved', inLib); saveBtn.textContent = inLib ? '★' : '☆'; };
+        saveBtn.addEventListener('click', () => { const n = addToLibrary([p]); refreshSave(); renderLibrary(); toast(n ? 'Saved to library' : 'Already saved'); });
+        row.querySelector('.pr-emoji').addEventListener('input', (e) => { p.emoji = e.target.value; refreshSave(); requestRender(); });
+        row.querySelector('.pr-title').addEventListener('input', (e) => { p.title = e.target.value; refreshSave(); requestRender(); });
+        row.querySelector('.pr-sub').addEventListener('input', (e) => { p.subtitle = e.target.value; requestRender(); });
+        row.querySelector('.pr-style').addEventListener('change', (e) => { p.style = e.target.value; requestRender(); });
+        const rot = row.querySelector('.pr-rot');
+        for (let r = -10; r <= 10; r += 2) rot.add(new Option(`${r}°`, r, false, p.rotation === r));
+        rot.addEventListener('change', (e) => { p.rotation = +e.target.value; requestRender(); });
       }
-
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error('Failed to decode image file'));
-        img.src = e.target.result;
-      };
-      reader.onerror = () => reject(new Error('Failed to read image file'));
-      reader.readAsDataURL(file);
+      row.querySelector('.pr-del').addEventListener('click', () => {
+        screen().pills = screen().pills.filter((x) => x.id !== p.id);
+        if (selectedPillId === p.id) selectedPillId = null;
+        renderPillList(); requestRender();
+      });
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('input,select,button')) return;
+        selectedPillId = p.id; renderPillList(); requestRender();
+      });
+      wrap.appendChild(row);
     });
   }
 
-  function buildBulkVariantName(preset, screenshotFile, usedNames) {
-    const presetPart = formatPresetNamePart(preset);
-    const screenshotPart = formatScreenshotNamePart(screenshotFile);
-    const baseName = screenshotPart ? `${presetPart} · ${screenshotPart}` : presetPart;
-    return getUniqueLabel(baseName, usedNames);
+  function syncStylePanel() {
+    const bg = screen().background;
+    const type = bg.type || 'gradient';
+    document.querySelectorAll('#bg-type-seg .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.bg === type));
+    $('bg-gradient-controls').classList.toggle('hidden', type !== 'gradient');
+    $('bg-solid-controls').classList.toggle('hidden', type !== 'solid');
+    $('grad-angle').value = bg.angle || 165;
+    $('solid-color').value = bg.color || '#EDE6FB';
+    $('bg-glow').checked = bg.glow !== false;
+    renderGradStops();
+    // active palette highlight
+    document.querySelectorAll('.pal-swatch').forEach((sw) => sw.classList.toggle('active', sw.dataset.pal === screen()._paletteId));
   }
 
-  function formatPresetNamePart(preset) {
-    if (!preset) return 'Preset';
-
-    const fallback = Number.isFinite(preset.number) ? `Preset ${preset.number}` : 'Preset';
-    const hero = typeof preset.hero === 'string' ? preset.hero : '';
-    const words = hero
-      .replace(/[\n\r]+/g, ' ')
-      .replace(/[^\w\s']/g, ' ')
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 5);
-
-    return words.length > 0 ? words.join(' ') : fallback;
+  function renderGradStops() {
+    const wrap = $('grad-stops');
+    wrap.innerHTML = '';
+    const bg = screen().background;
+    if (bg.type !== 'gradient') return;
+    bg.colors = bg.colors || ['#EDE6FB', '#FBE6DD'];
+    bg.colors.forEach((c, i) => {
+      const row = document.createElement('div');
+      row.className = 'grad-stop';
+      row.innerHTML = `<input type="color" value="${c}"><span class="gs-hex">${c}</span><button class="gs-del" title="Remove">×</button>`;
+      row.querySelector('input').addEventListener('input', (e) => { bg.colors[i] = e.target.value; row.querySelector('.gs-hex').textContent = e.target.value; requestRender(); });
+      row.querySelector('.gs-del').addEventListener('click', () => { if (bg.colors.length <= 2) return; bg.colors.splice(i, 1); bg.stops = null; renderGradStops(); requestRender(); });
+      wrap.appendChild(row);
+    });
+    const add = document.createElement('button');
+    add.className = 'btn ghost sm'; add.textContent = '+ Colour';
+    add.addEventListener('click', () => { bg.colors.push('#ffffff'); bg.stops = null; renderGradStops(); requestRender(); });
+    wrap.appendChild(add);
   }
 
-  function formatScreenshotNamePart(screenshotFile) {
-    if (!screenshotFile || typeof screenshotFile.name !== 'string') return '';
-
-    const noExtension = screenshotFile.name.replace(/\.[^.]+$/, '');
-    const cleaned = noExtension
-      .replace(/[_-]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    return cleaned.slice(0, 40);
+  // ──────────────────────────────────────────────────────────────────────────
+  // Palette + gradient presets + fonts
+  // ──────────────────────────────────────────────────────────────────────────
+  function initPaletteGrid() {
+    const grid = $('palette-grid');
+    grid.innerHTML = '';
+    brand.palettes.forEach((pal) => {
+      const sw = document.createElement('div');
+      sw.className = 'pal-swatch'; sw.dataset.pal = pal.id;
+      const cols = pal.bg.colors || ['#888'];
+      sw.style.background = `linear-gradient(135deg,${cols.join(',')})`;
+      sw.innerHTML = `<span>${pal.name}</span>`;
+      sw.addEventListener('click', () => applyPalette(pal.id));
+      grid.appendChild(sw);
+    });
   }
 
-  function getUniqueLabel(baseLabel, existingLabels) {
-    const cleanedBase = (baseLabel || 'Variant').replace(/\s+/g, ' ').trim().slice(0, 72) || 'Variant';
-    if (!existingLabels || !existingLabels.has(cleanedBase)) return cleanedBase;
-
-    let index = 2;
-    while (true) {
-      const candidate = `${cleanedBase} (${index})`;
-      if (!existingLabels.has(candidate)) return candidate;
-      index += 1;
-    }
+  function applyPalette(id, s = screen()) {
+    const pal = brand.palettes.find((p) => p.id === id);
+    if (!pal) return;
+    s._paletteId = id;
+    s.background = { ...JSON.parse(JSON.stringify(pal.bg)), glow: s.background.glow !== false };
+    s.theme = themeFor(pal.theme, pal.accent, pal.accent2);
+    if (s === screen()) { syncStylePanel(); $('theme-dark').checked = pal.theme === 'dark'; requestRender(); }
   }
 
-  function loadImageFile(file, num) {
+  function initGradientPresets() {
+    const wrap = $('grad-presets');
+    wrap.innerHTML = '';
+    Object.entries(brand.gradients).forEach(([key, g]) => {
+      if (!g.colors) return;
+      const el = document.createElement('div');
+      el.className = 'gp';
+      el.title = key;
+      el.style.background = `linear-gradient(${(g.angle || 165)}deg,${g.colors.join(',')})`;
+      el.addEventListener('click', () => {
+        const bg = screen().background;
+        bg.type = 'gradient'; bg.colors = [...g.colors]; bg.stops = g.stops ? [...g.stops] : null; bg.angle = g.angle || 165;
+        document.querySelectorAll('#bg-type-seg .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.bg === 'gradient'));
+        $('bg-gradient-controls').classList.remove('hidden'); $('bg-solid-controls').classList.add('hidden');
+        renderGradStops(); $('grad-angle').value = bg.angle; requestRender();
+      });
+      wrap.appendChild(el);
+    });
+  }
+
+  function initFontSelects() {
+    ['font-display', 'font-body'].forEach((id) => {
+      const sel = $(id); sel.innerHTML = '';
+      FONTS.forEach((f) => sel.add(new Option(f, f)));
+    });
+  }
+
+  function updateFontPreview() {
+    const s = screen();
+    const d = $('font-preview').querySelector('.fp-display');
+    const b = $('font-preview').querySelector('.fp-body');
+    d.style.fontFamily = `"${s.fonts.display}"`;
+    b.style.fontFamily = `"${s.fonts.body}"`;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Upload
+  // ──────────────────────────────────────────────────────────────────────────
+  function setupUpload() {
+    const zone = $('upload-zone'), input = $('upload-input');
+    zone.addEventListener('click', () => input.click());
+    input.addEventListener('change', () => { if (input.files[0]) loadShot(input.files[0]); });
+    zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('over'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+    zone.addEventListener('drop', (e) => { e.preventDefault(); zone.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) loadShot(f); });
+  }
+  function loadShot(file) {
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = () => {
       const img = new Image();
-      img.onload = () => {
-        if (num === 1) {
-          state.screenshot = img;
-          // Auto-apply theme whenever a new screenshot is uploaded
-          applyAutoTheme();
-        } else {
-          state.screenshot2 = img;
-        }
-
-        const preview = document.getElementById(`upload-preview-${num}`);
-        const placeholder = document.getElementById(`upload-placeholder-${num}`);
-        const removeBtn = document.getElementById(`upload-remove-${num}`);
-        const zone = document.getElementById(`upload-zone-${num}`);
-
-        preview.src = e.target.result;
-        preview.classList.remove('hidden');
-        removeBtn.classList.remove('hidden');
-        placeholder.classList.add('hidden');
-        zone.classList.add('has-image');
-
-        requestRender();
-      };
-      img.src = e.target.result;
+      img.onload = () => { activePhone().screenshot = img; syncDeviceControls(); renderPhoneTabs(); requestRender(); if (showNeighbors) renderNeighbors(); };
+      img.src = reader.result;
     };
     reader.readAsDataURL(file);
   }
 
-  function applyAutoThemeToState(targetState) {
-    if (!targetState || !targetState.screenshot) return;
-
-    const colors = ColorExtractor.extract(targetState.screenshot, 8);
-    const brightness = ColorExtractor.analyzeBrightness(targetState.screenshot);
-    const gradient = ColorExtractor.generateGradient(colors, brightness);
-    const textColor = ColorExtractor.suggestTextColor(gradient.colors);
-
-    targetState.extractedColors = colors;
-    targetState.background.type = 'gradient';
-    targetState.background.colors = [...gradient.colors];
-    targetState.background.stops = gradient.colors.map((_, i) => i / Math.max(1, gradient.colors.length - 1));
-    targetState.background.angle = gradient.angle;
-
-    if (Array.isArray(targetState.texts)) {
-      for (const text of targetState.texts) {
-        text.color = textColor;
-      }
-    }
+  // ──────────────────────────────────────────────────────────────────────────
+  // AI actions (Kimi)
+  // ──────────────────────────────────────────────────────────────────────────
+  // Downscaled JPEG of a screenshot on this screen to attach to Kimi (vision).
+  function screenshotDataURL(maxW = 820) {
+    const ap = activePhone();
+    const img = (ap && ap.screenshot) || (screen().phones.find((p) => p.screenshot) || {}).screenshot;
+    if (!img) return null;
+    const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+    if (!iw || !ih) return null;
+    const scale = Math.min(1, maxW / iw);
+    const w = Math.max(1, Math.round(iw * scale)), h = Math.max(1, Math.round(ih * scale));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    c.getContext('2d').drawImage(img, 0, 0, w, h);
+    try { return c.toDataURL('image/jpeg', 0.82); } catch { return null; }
   }
 
-  function applyAutoTheme() {
-    if (!state.screenshot) return;
-
-    applyAutoThemeToState(state);
-    showExtractedColors(state.extractedColors || []);
-    updateBackgroundUI();
-    updateTextUI();
-    activateBgType('gradient');
-    requestRender();
+  function aiBusy(on, text) {
+    $('ai-status').classList.toggle('hidden', !on);
+    $('ai-error').classList.add('hidden');
+    if (text) $('ai-status-text').textContent = text;
+    document.querySelectorAll('.ai-btn').forEach((b) => (b.disabled = on));
   }
-
-  function showExtractedColors(colors) {
-    const container = document.getElementById('extracted-colors');
-    const swatches = document.getElementById('color-swatches');
-    container.classList.remove('hidden');
-    swatches.innerHTML = '';
-
-    for (const color of colors) {
-      const swatch = document.createElement('div');
-      swatch.className = 'color-swatch';
-      swatch.style.background = color.hex;
-      swatch.title = color.hex;
-      swatch.addEventListener('click', () => {
-        // Copy to clipboard
-        navigator.clipboard.writeText(color.hex).catch(() => {});
-      });
-      swatches.appendChild(swatch);
-    }
-  }
-
-  // ==================== LAYOUT GRID ====================
-  let activeCat = 'all';
-
-  function setupLayoutGrid() {
-    renderLayoutGrid('all');
-
-    // Category buttons
-    document.querySelectorAll('.layout-cat-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('.layout-cat-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        activeCat = btn.dataset.cat;
-        renderLayoutGrid(activeCat);
-      });
-    });
-  }
-
-  const CATEGORY_LABELS = {
-    single: 'Single',
-    dual: 'Dual',
-    bleed: 'Edge Bleed',
-    float: 'Floating',
-    perspective: '3D'
-  };
-
-  function renderLayoutGrid(category) {
-    const grid = document.getElementById('layout-grid');
-    grid.innerHTML = '';
-
-    // Group layouts by category
-    const groups = {};
-    for (const [id, layout] of Object.entries(LAYOUTS)) {
-      if (category !== 'all' && layout.category !== category) continue;
-      const cat = layout.category;
-      if (!groups[cat]) groups[cat] = [];
-      groups[cat].push({ id, layout });
-    }
-
-    // Render each group as a labelled horizontal row
-    for (const [cat, items] of Object.entries(groups)) {
-      const groupDiv = document.createElement('div');
-      groupDiv.className = 'layout-group';
-
-      const title = document.createElement('h4');
-      title.className = 'layout-group-title';
-      title.textContent = CATEGORY_LABELS[cat] || cat;
-      groupDiv.appendChild(title);
-
-      const row = document.createElement('div');
-      row.className = 'layout-group-row';
-
-      for (const { id, layout } of items) {
-        const option = document.createElement('div');
-        option.className = `layout-option${id === state.currentLayoutId ? ' active' : ''}`;
-        option.dataset.layoutId = id;
-
-        const thumbCanvas = document.createElement('canvas');
-        thumbCanvas.width = 72;
-        thumbCanvas.height = 130;
-        Renderer.drawLayoutThumbnail(thumbCanvas, layout);
-        option.appendChild(thumbCanvas);
-
-        const label = document.createElement('div');
-        label.className = 'layout-label';
-        label.textContent = layout.name;
-        option.appendChild(label);
-
-        option.addEventListener('click', () => {
-          selectLayout(id);
-        });
-
-        row.appendChild(option);
-      }
-
-      groupDiv.appendChild(row);
-      grid.appendChild(groupDiv);
-    }
-  }
-
-  function selectLayout(layoutId) {
-    state.currentLayoutId = layoutId;
-    state.currentLayout = LAYOUTS[layoutId];
-
-    // Reset phone positions to layout defaults
-    const p1 = state.currentLayout.phones[0];
-    state.phoneScale = Math.round(p1.width * 100);
-    state.phoneX = Math.round(p1.x * 100);
-    state.phoneY = Math.round(p1.y * 100);
-    state.phoneRotation = p1.rotation || 0;
-    state.phonePerspective = p1.perspective || '';
-
-    if (state.currentLayout.phones.length > 1) {
-      const p2 = state.currentLayout.phones[1];
-      state.phone2Scale = Math.round(p2.width * 100);
-      state.phone2X = Math.round(p2.x * 100);
-      state.phone2Y = Math.round(p2.y * 100);
-      state.phone2Rotation = p2.rotation || 0;
-      state.phone2Perspective = p2.perspective || '';
-      document.getElementById('dual-controls').classList.remove('hidden');
-    } else {
-      document.getElementById('dual-controls').classList.add('hidden');
-    }
-
-    // Update active state in grid
-    document.querySelectorAll('.layout-option').forEach(el => {
-      el.classList.toggle('active', el.dataset.layoutId === layoutId);
-    });
-
-    // Update slider UI
-    updateLayoutSlidersUI();
-    requestRender();
-  }
-
-  function updateLayoutSlidersUI() {
-    setSliderValue('phone-scale', state.phoneScale, `${state.phoneScale}%`);
-    setSliderValue('phone-x', state.phoneX, `${state.phoneX}%`);
-    setSliderValue('phone-y', state.phoneY, `${state.phoneY}%`);
-    setSliderValue('phone-rotation', state.phoneRotation, `${state.phoneRotation}°`);
-
-    setSliderValue('phone2-scale', state.phone2Scale, `${state.phone2Scale}%`);
-    setSliderValue('phone2-x', state.phone2X, `${state.phone2X}%`);
-    setSliderValue('phone2-y', state.phone2Y, `${state.phone2Y}%`);
-    setSliderValue('phone2-rotation', state.phone2Rotation, `${state.phone2Rotation}°`);
-  }
-
-  function setSliderValue(id, value, displayText) {
-    const slider = document.getElementById(id);
-    const display = document.getElementById(`${id}-value`);
-    if (slider) slider.value = value;
-    if (display) display.textContent = displayText;
-  }
-
-  // ==================== TEXT PANEL ====================
-  function setupTextPanel() {
-    renderTextLayers();
-    setupTextPresetControls();
-
-    document.getElementById('btn-add-text').addEventListener('click', () => {
-      state.texts.push({
-        id: state.nextTextId++,
-        content: 'New text',
-        font: 'Inter',
-        size: 56,
-        weight: 500,
-        color: '#FFFFFF',
-        x: 50, y: 35 + state.texts.length * 8,
-        align: 'center',
-        lineHeight: 1.2,
-        maxWidth: 80,
-        letterSpacing: 0,
-        shadow: false,
-        shadowColor: 'rgba(0,0,0,0.3)',
-        shadowBlur: 10,
-        shadowOffsetX: 0,
-        shadowOffsetY: 4,
-      });
-      renderTextLayers();
-      requestRender();
-    });
-  }
-
-  function setupTextPresetControls() {
-    const select = document.getElementById('text-preset-select');
-    const prevBtn = document.getElementById('btn-prev-text-preset');
-    const applyBtn = document.getElementById('btn-apply-text-preset');
-    const nextBtn = document.getElementById('btn-next-text-preset');
-    const description = document.getElementById('text-preset-description');
-    const screenshotNote = document.getElementById('text-preset-screenshot-note');
-    if (!select || !applyBtn || !description || !screenshotNote) return;
-
-    const presets = getSharedTextPresets();
-    select.innerHTML = '';
-    if (presets.length === 0) {
-      const option = document.createElement('option');
-      option.textContent = 'No text presets loaded';
-      option.value = '';
-      select.appendChild(option);
-      select.disabled = true;
-      applyBtn.disabled = true;
-      description.textContent = 'Text preset library is unavailable.';
-      screenshotNote.textContent = '';
-      return;
-    }
-
-    for (const preset of presets) {
-      const option = document.createElement('option');
-      option.value = String(preset.number);
-      option.textContent = `Preset text ${preset.number}`;
-      select.appendChild(option);
-    }
-
-    const syncInfo = () => {
-      const active = presets.find((item) => String(item.number) === select.value) || presets[0];
-      if (!active) return;
-      description.textContent = `${active.category}: ${active.subtext}`;
-      screenshotNote.textContent = `Screenshot note: ${active.screenshotNote}`;
-    };
-
-    const applySelection = () => {
-      const active = presets.find((item) => String(item.number) === select.value);
-      if (!active) return;
-      applyTextPreset(active);
-    };
-
-    const cyclePreset = (step) => {
-      if (presets.length === 0) return;
-      const currentIndex = Math.max(0, select.selectedIndex);
-      const nextIndex = (currentIndex + step + presets.length) % presets.length;
-      select.selectedIndex = nextIndex;
-      syncInfo();
-      applySelection();
-    };
-
-    select.addEventListener('change', syncInfo);
-    applyBtn.addEventListener('click', applySelection);
-    if (prevBtn) prevBtn.addEventListener('click', () => cyclePreset(-1));
-    if (nextBtn) nextBtn.addEventListener('click', () => cyclePreset(1));
-
-    syncInfo();
-  }
-
-  function getSharedTextPresets() {
-    if (!window.AdTextPresets || !Array.isArray(window.AdTextPresets.items)) return [];
-    return window.AdTextPresets.items;
-  }
-
-  function applyTextPreset(preset) {
-    applyTextPresetToState(state, preset);
-
-    renderTextLayers();
-    requestRender();
-  }
-
-  function applyTextPresetToState(targetState, preset) {
-    if (!targetState || !preset) return;
-
-    const existing = Array.isArray(targetState.texts) ? targetState.texts : [];
-    const heroTemplate = existing[0] || {};
-    const subTemplate = existing[1] || {};
-
-    const heroId = Number.isFinite(heroTemplate.id) ? heroTemplate.id : 1;
-    let subId = Number.isFinite(subTemplate.id) ? subTemplate.id : 2;
-    if (subId === heroId) subId = heroId + 1;
-
-    const hero = {
-      ...heroTemplate,
-      id: heroId,
-      content: preset.hero,
-      font: 'Inter',
-      weight: 700,
-      size: Number.isFinite(heroTemplate.size) ? heroTemplate.size : 96,
-      color: heroTemplate.color || '#FFFFFF',
-      x: Number.isFinite(heroTemplate.x) ? heroTemplate.x : 50,
-      y: Number.isFinite(heroTemplate.y) ? heroTemplate.y : 7,
-      align: heroTemplate.align || 'center',
-      lineHeight: Number.isFinite(heroTemplate.lineHeight) ? heroTemplate.lineHeight : 1.1,
-      maxWidth: Number.isFinite(heroTemplate.maxWidth) ? heroTemplate.maxWidth : 85,
-      letterSpacing: Number.isFinite(heroTemplate.letterSpacing) ? heroTemplate.letterSpacing : -1,
-      shadow: typeof heroTemplate.shadow === 'boolean' ? heroTemplate.shadow : false,
-      shadowColor: heroTemplate.shadowColor || 'rgba(0,0,0,0.3)',
-      shadowBlur: Number.isFinite(heroTemplate.shadowBlur) ? heroTemplate.shadowBlur : 10,
-      shadowOffsetX: Number.isFinite(heroTemplate.shadowOffsetX) ? heroTemplate.shadowOffsetX : 0,
-      shadowOffsetY: Number.isFinite(heroTemplate.shadowOffsetY) ? heroTemplate.shadowOffsetY : 4,
-    };
-
-    const sub = {
-      ...subTemplate,
-      id: subId,
-      content: preset.subtext,
-      font: 'Inter',
-      weight: 400,
-      size: Number.isFinite(subTemplate.size) ? subTemplate.size : 52,
-      color: subTemplate.color || '#FFFFFF',
-      x: Number.isFinite(subTemplate.x) ? subTemplate.x : 50,
-      y: Number.isFinite(subTemplate.y) ? subTemplate.y : 25,
-      align: subTemplate.align || 'center',
-      lineHeight: Number.isFinite(subTemplate.lineHeight) ? subTemplate.lineHeight : 1.3,
-      maxWidth: Number.isFinite(subTemplate.maxWidth) ? subTemplate.maxWidth : 80,
-      letterSpacing: Number.isFinite(subTemplate.letterSpacing) ? subTemplate.letterSpacing : 0,
-      shadow: typeof subTemplate.shadow === 'boolean' ? subTemplate.shadow : false,
-      shadowColor: subTemplate.shadowColor || 'rgba(0,0,0,0.2)',
-      shadowBlur: Number.isFinite(subTemplate.shadowBlur) ? subTemplate.shadowBlur : 8,
-      shadowOffsetX: Number.isFinite(subTemplate.shadowOffsetX) ? subTemplate.shadowOffsetX : 0,
-      shadowOffsetY: Number.isFinite(subTemplate.shadowOffsetY) ? subTemplate.shadowOffsetY : 3,
-    };
-
-    targetState.texts = [hero, sub, ...existing.slice(2)];
-    targetState.nextTextId = targetState.texts.reduce((maxId, text) => {
-      return Math.max(maxId, Number.isFinite(text.id) ? text.id : 0);
-    }, 0) + 1;
-  }
-
-  function renderTextLayers() {
-    const container = document.getElementById('text-layers');
-    container.innerHTML = '';
-
-    for (const text of state.texts) {
-      const card = createTextLayerCard(text);
-      container.appendChild(card);
-    }
-  }
-
-  function createTextLayerCard(text) {
-    const card = document.createElement('div');
-    card.className = 'text-layer-card';
-    card.dataset.textId = text.id;
-
-    // Header
-    const header = document.createElement('div');
-    header.className = 'text-layer-header';
-
-    const name = document.createElement('span');
-    name.className = 'text-layer-name';
-    name.textContent = `Text ${text.id}`;
-
-    const actions = document.createElement('div');
-    actions.className = 'text-layer-actions';
-
-    // Duplicate button
-    const dupBtn = document.createElement('button');
-    dupBtn.className = 'text-layer-action';
-    dupBtn.innerHTML = '⧉';
-    dupBtn.title = 'Duplicate';
-    dupBtn.addEventListener('click', () => {
-      const newText = { ...text, id: state.nextTextId++, y: text.y + 5 };
-      state.texts.push(newText);
-      renderTextLayers();
-      requestRender();
-    });
-
-    // Delete button
-    const delBtn = document.createElement('button');
-    delBtn.className = 'text-layer-action delete';
-    delBtn.innerHTML = '×';
-    delBtn.title = 'Delete';
-    delBtn.addEventListener('click', () => {
-      state.texts = state.texts.filter(t => t.id !== text.id);
-      renderTextLayers();
-      requestRender();
-    });
-
-    actions.appendChild(dupBtn);
-    actions.appendChild(delBtn);
-    header.appendChild(name);
-    header.appendChild(actions);
-    card.appendChild(header);
-
-    // Content textarea
-    const textarea = document.createElement('textarea');
-    textarea.className = 'text-layer-content';
-    textarea.value = text.content;
-    textarea.rows = 2;
-    textarea.placeholder = 'Enter text...';
-    textarea.addEventListener('input', () => {
-      text.content = textarea.value;
-      requestRender();
-    });
-    card.appendChild(textarea);
-
-    // Font and weight row
-    const controlsGrid = document.createElement('div');
-    controlsGrid.className = 'text-controls-grid';
-
-    // Font select
-    const fontGroup = createControlGroup('Font');
-    const fontSelect = document.createElement('select');
-    for (const font of AVAILABLE_FONTS) {
-      const opt = document.createElement('option');
-      opt.value = font;
-      opt.textContent = font;
-      opt.style.fontFamily = font;
-      if (font === text.font) opt.selected = true;
-      fontSelect.appendChild(opt);
-    }
-    fontSelect.addEventListener('change', () => {
-      text.font = fontSelect.value;
-      requestRender();
-    });
-    fontGroup.appendChild(fontSelect);
-    controlsGrid.appendChild(fontGroup);
-
-    // Weight select
-    const weightGroup = createControlGroup('Weight');
-    const weightSelect = document.createElement('select');
-    for (const w of FONT_WEIGHTS) {
-      const opt = document.createElement('option');
-      opt.value = w.value;
-      opt.textContent = w.label;
-      if (w.value === text.weight) opt.selected = true;
-      weightSelect.appendChild(opt);
-    }
-    weightSelect.addEventListener('change', () => {
-      text.weight = parseInt(weightSelect.value);
-      requestRender();
-    });
-    weightGroup.appendChild(weightSelect);
-    controlsGrid.appendChild(weightGroup);
-
-    card.appendChild(controlsGrid);
-
-    // Size and Color row
-    const row2 = document.createElement('div');
-    row2.className = 'text-controls-row';
-
-    // Size
-    const sizeGroup = createControlGroup('Size');
-    const sizeInput = document.createElement('input');
-    sizeInput.type = 'number';
-    sizeInput.value = text.size;
-    sizeInput.min = 12;
-    sizeInput.max = 300;
-    sizeInput.step = 2;
-    sizeInput.style.cssText = 'width:100%;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:7px 10px;color:var(--text-primary);font-size:12px;font-family:inherit;outline:none;';
-    sizeInput.addEventListener('input', () => {
-      text.size = parseInt(sizeInput.value) || 48;
-      requestRender();
-    });
-    sizeGroup.appendChild(sizeInput);
-    row2.appendChild(sizeGroup);
-
-    // Color
-    const colorGroup = createControlGroup('Color');
-    const colorRow = document.createElement('div');
-    colorRow.className = 'color-input-row';
-    const colorPicker = document.createElement('input');
-    colorPicker.type = 'color';
-    colorPicker.value = text.color;
-    const colorHex = document.createElement('input');
-    colorHex.type = 'text';
-    colorHex.className = 'hex-input';
-    colorHex.value = text.color;
-
-    colorPicker.addEventListener('input', () => {
-      text.color = colorPicker.value;
-      colorHex.value = colorPicker.value;
-      requestRender();
-    });
-    colorHex.addEventListener('change', () => {
-      if (/^#[0-9a-fA-F]{6}$/.test(colorHex.value)) {
-        text.color = colorHex.value;
-        colorPicker.value = colorHex.value;
-        requestRender();
-      }
-    });
-    colorRow.appendChild(colorPicker);
-    colorRow.appendChild(colorHex);
-    colorGroup.appendChild(colorRow);
-    row2.appendChild(colorGroup);
-
-    card.appendChild(row2);
-
-    // Position and spacing
-    const row3 = document.createElement('div');
-    row3.className = 'text-controls-row';
-
-    // Y position
-    const yGroup = createControlGroup('Y Position');
-    const yRange = createRange(text.y, 0, 90, 1, (val) => {
-      text.y = val;
-      requestRender();
-    });
-    yGroup.appendChild(yRange);
-    row3.appendChild(yGroup);
-
-    // X position
-    const xGroup = createControlGroup('X Position');
-    const xRange = createRange(text.x, 5, 95, 1, (val) => {
-      text.x = val;
-      requestRender();
-    });
-    xGroup.appendChild(xRange);
-    row3.appendChild(xGroup);
-
-    card.appendChild(row3);
-
-    const row4 = document.createElement('div');
-    row4.className = 'text-controls-row';
-
-    // Max Width
-    const mwGroup = createControlGroup('Width');
-    const mwRange = createRange(text.maxWidth, 20, 100, 1, (val) => {
-      text.maxWidth = val;
-      requestRender();
-    });
-    mwGroup.appendChild(mwRange);
-    row4.appendChild(mwGroup);
-
-    // Line Height
-    const lhGroup = createControlGroup('Line Height');
-    const lhRange = createRange(text.lineHeight * 100, 80, 200, 5, (val) => {
-      text.lineHeight = val / 100;
-      requestRender();
-    });
-    lhGroup.appendChild(lhRange);
-    row4.appendChild(lhGroup);
-
-    card.appendChild(row4);
-
-    // Letter spacing
-    const row5 = document.createElement('div');
-    row5.className = 'text-controls-row';
-
-    const lsGroup = createControlGroup('Letter Spacing');
-    const lsRange = createRange(text.letterSpacing, -5, 20, 1, (val) => {
-      text.letterSpacing = val;
-      requestRender();
-    });
-    lsGroup.appendChild(lsRange);
-    row5.appendChild(lsGroup);
-
-    // Alignment
-    const alignGroup = createControlGroup('Align');
-    const alignRow = document.createElement('div');
-    alignRow.className = 'text-style-row';
-    ['left', 'center', 'right'].forEach(a => {
-      const btn = document.createElement('button');
-      btn.className = `text-style-btn${a === text.align ? ' active' : ''}`;
-      btn.innerHTML = a === 'left' ? '≡' : a === 'center' ? '≡' : '≡';
-      btn.title = a.charAt(0).toUpperCase() + a.slice(1);
-      btn.style.fontWeight = a === 'center' ? '400' : '400';
-      // Use distinct symbols
-      if (a === 'left') btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg>';
-      if (a === 'center') btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="10" x2="6" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="18" y1="18" x2="6" y2="18"/></svg>';
-      if (a === 'right') btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="21" y1="10" x2="7" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="21" y1="18" x2="7" y2="18"/></svg>';
-      btn.addEventListener('click', () => {
-        text.align = a;
-        alignRow.querySelectorAll('.text-style-btn').forEach(b => b.classList.toggle('active', b === btn));
-        requestRender();
-      });
-      alignRow.appendChild(btn);
-    });
-    alignGroup.appendChild(alignRow);
-    row5.appendChild(alignGroup);
-
-    card.appendChild(row5);
-
-    // Text shadow toggle
-    const shadowRow = document.createElement('div');
-    shadowRow.className = 'text-shadow-row';
-    const shadowLabel = document.createElement('span');
-    shadowLabel.textContent = 'Text Shadow';
-    shadowLabel.style.cssText = 'font-size:11px;font-weight:500;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.03em;';
-    const shadowToggle = document.createElement('label');
-    shadowToggle.className = 'toggle';
-    const shadowCheck = document.createElement('input');
-    shadowCheck.type = 'checkbox';
-    shadowCheck.checked = text.shadow;
-    shadowCheck.addEventListener('change', () => {
-      text.shadow = shadowCheck.checked;
-      requestRender();
-    });
-    const shadowSlider = document.createElement('span');
-    shadowSlider.className = 'toggle-slider';
-    shadowToggle.appendChild(shadowCheck);
-    shadowToggle.appendChild(shadowSlider);
-    shadowRow.appendChild(shadowLabel);
-    shadowRow.appendChild(shadowToggle);
-    card.appendChild(shadowRow);
-
-    return card;
-  }
-
-  function createControlGroup(label) {
-    const group = document.createElement('div');
-    group.className = 'control-group';
-    const lbl = document.createElement('label');
-    lbl.textContent = label;
-    group.appendChild(lbl);
-    return group;
-  }
-
-  function createRange(value, min, max, step, onChange) {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'range-with-value';
-    const input = document.createElement('input');
-    input.type = 'range';
-    input.value = value;
-    input.min = min;
-    input.max = max;
-    input.step = step;
-    const display = document.createElement('span');
-    display.className = 'range-value';
-    display.textContent = value;
-
-    input.addEventListener('input', () => {
-      const val = parseFloat(input.value);
-      display.textContent = val;
-      onChange(val);
-    });
-
-    wrapper.appendChild(input);
-    wrapper.appendChild(display);
-    return wrapper;
-  }
-
-  function updateTextUI() {
-    renderTextLayers();
-  }
-
-  // ==================== BACKGROUND PANEL ====================
-  function setupBackgroundPanel() {
-    // Background type toggle
-    document.querySelectorAll('.bg-type-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        activateBgType(btn.dataset.bgType);
-      });
-    });
-
-    // Gradient presets
-    renderGradientPresets();
-    renderGradientStops();
-    renderPatternPresets();
-    bindPatternColorInputs();
-    syncPatternColorInputs();
-    bindPatternToneInputs();
-    syncPatternToneInputs();
-    setupSavedBackgroundPresetControls();
-
-    // Gradient angle slider
-    bindSlider('gradient-angle', (val) => {
-      state.background.angle = val;
-      document.getElementById('gradient-angle-value').textContent = `${val}°`;
-      requestRender();
-    });
-
-    // Add stop button
-    document.getElementById('btn-add-stop').addEventListener('click', () => {
-      state.background.colors.push('#ffffff');
-      state.background.stops = state.background.colors.map((_, i) => i / (state.background.colors.length - 1));
-      renderGradientStops();
-      requestRender();
-    });
-
-    // Solid color
-    const solidColor = document.getElementById('solid-color');
-    const solidHex = document.getElementById('solid-color-hex');
-    solidColor.addEventListener('input', () => {
-      state.background.color = solidColor.value;
-      solidHex.value = solidColor.value;
-      requestRender();
-    });
-    solidHex.addEventListener('change', () => {
-      if (/^#[0-9a-fA-F]{6}$/.test(solidHex.value)) {
-        state.background.color = solidHex.value;
-        solidColor.value = solidHex.value;
-        requestRender();
-      }
-    });
-
-    // Mesh colors
-    for (let i = 1; i <= 4; i++) {
-      const input = document.getElementById(`mesh-color-${i}`);
-      input.addEventListener('input', () => {
-        state.background.meshColors[i - 1] = input.value;
-        requestRender();
-      });
-    }
-
-    // Mesh complexity
-    bindSlider('mesh-complexity', (val) => {
-      state.background.meshComplexity = val;
-      document.getElementById('mesh-complexity-value').textContent = val;
-      requestRender();
-    });
-
-    syncBgTypeVisibility(state.background.type);
-  }
-
-  function activateBgType(type) {
-    state.background.type = type;
-    syncBgTypeVisibility(type);
-
-    requestRender();
-  }
-
-  function syncBgTypeVisibility(type) {
-    document.querySelectorAll('.bg-type-btn').forEach(b => {
-      b.classList.toggle('active', b.dataset.bgType === type);
-    });
-
-    document.getElementById('bg-gradient-controls').classList.toggle('hidden', type !== 'gradient');
-    document.getElementById('bg-solid-controls').classList.toggle('hidden', type !== 'solid');
-    document.getElementById('bg-pattern-controls').classList.toggle('hidden', type !== 'pattern');
-    document.getElementById('bg-mesh-controls').classList.toggle('hidden', type !== 'mesh');
-  }
-
-  function renderGradientPresets() {
-    const container = document.getElementById('gradient-presets');
-    container.innerHTML = '';
-
-    for (const preset of GRADIENT_PRESETS) {
-      const btn = document.createElement('div');
-      btn.className = 'gradient-preset';
-      const gradCSS = `linear-gradient(${preset.angle}deg, ${preset.colors.join(', ')})`;
-      btn.style.background = gradCSS;
-      btn.title = preset.name;
-
-      btn.addEventListener('click', () => {
-        state.background.colors = [...preset.colors];
-        state.background.stops = preset.colors.map((_, i) => i / (preset.colors.length - 1));
-        state.background.angle = preset.angle;
-        renderGradientStops();
-        setSliderValue('gradient-angle', preset.angle, `${preset.angle}°`);
-
-        // Update active preset
-        container.querySelectorAll('.gradient-preset').forEach(p => p.classList.remove('active'));
-        btn.classList.add('active');
-
-        requestRender();
-      });
-
-      container.appendChild(btn);
-    }
-  }
-
-  function renderGradientStops() {
-    const container = document.getElementById('gradient-stops');
-    container.innerHTML = '';
-
-    for (let i = 0; i < state.background.colors.length; i++) {
-      const row = document.createElement('div');
-      row.className = 'gradient-stop-row';
-
-      const colorInput = document.createElement('input');
-      colorInput.type = 'color';
-      colorInput.value = state.background.colors[i];
-      colorInput.addEventListener('input', () => {
-        state.background.colors[i] = colorInput.value;
-        requestRender();
-      });
-
-      const hexInput = document.createElement('input');
-      hexInput.type = 'text';
-      hexInput.className = 'hex-input';
-      hexInput.value = state.background.colors[i];
-      hexInput.style.flex = '1';
-      hexInput.addEventListener('change', () => {
-        if (/^#[0-9a-fA-F]{6}$/.test(hexInput.value)) {
-          state.background.colors[i] = hexInput.value;
-          colorInput.value = hexInput.value;
-          requestRender();
-        }
-      });
-
-      row.appendChild(colorInput);
-      row.appendChild(hexInput);
-
-      // Remove button (minimum 2 stops)
-      if (state.background.colors.length > 2) {
-        const removeBtn = document.createElement('button');
-        removeBtn.className = 'btn-remove-stop';
-        removeBtn.innerHTML = '×';
-        removeBtn.addEventListener('click', () => {
-          state.background.colors.splice(i, 1);
-          state.background.stops = state.background.colors.map((_, j) => j / (state.background.colors.length - 1));
-          renderGradientStops();
-          requestRender();
-        });
-        row.appendChild(removeBtn);
-      }
-
-      container.appendChild(row);
-    }
-  }
-
-  function renderPatternPresets() {
-    const container = document.getElementById('pattern-presets');
-    if (!container) return;
-    container.innerHTML = '';
-
-    const patterns = window.BackgroundLibrary && window.BackgroundLibrary.PATTERNS;
-    if (!patterns || patterns.length === 0) return;
-
-    ensurePatternColors();
-    const accent = state.background.patternColors[0];
-
-    for (const pattern of patterns) {
-      const item = document.createElement('button');
-      item.type = 'button';
-      item.className = `pattern-preset-item${state.background.patternId === pattern.id ? ' active' : ''}`;
-      item.dataset.patternId = pattern.id;
-      item.title = pattern.name;
-
-      const thumbCanvas = document.createElement('canvas');
-      thumbCanvas.width = 120;
-      thumbCanvas.height = 120;
-      const tctx = thumbCanvas.getContext('2d');
-      try {
-        pattern.generate(tctx, 120, 120, accent);
-      } catch (_) {
-        tctx.fillStyle = '#D8D8E8';
-        tctx.fillRect(0, 0, 120, 120);
-      }
-      item.style.backgroundImage = `url(${thumbCanvas.toDataURL()})`;
-
-      item.addEventListener('click', () => {
-        state.background.patternId = pattern.id;
-        activateBgType('pattern');
-        updateBackgroundUI();
-      });
-
-      container.appendChild(item);
-    }
-  }
-
-  function bindPatternColorInputs() {
-    for (let i = 1; i <= 3; i++) {
-      const picker = document.getElementById(`pattern-color-${i}`);
-      const hex = document.getElementById(`pattern-color-${i}-hex`);
-      if (!picker || !hex) continue;
-
-      picker.addEventListener('input', () => {
-        ensurePatternColors();
-        state.background.patternColors[i - 1] = picker.value;
-        hex.value = picker.value.toUpperCase();
-        renderPatternPresets();
-        requestRender();
-      });
-
-      hex.addEventListener('change', () => {
-        const normalized = normalizeHexColor(hex.value);
-        if (!normalized) return;
-        ensurePatternColors();
-        state.background.patternColors[i - 1] = normalized;
-        picker.value = normalized;
-        hex.value = normalized.toUpperCase();
-        renderPatternPresets();
-        requestRender();
-      });
-    }
-  }
-
-  function ensurePatternColors() {
-    if (!Array.isArray(state.background.patternColors)) {
-      state.background.patternColors = ['#8D7EDB', '#C5B8F0', '#ECE5FF'];
-      return;
-    }
-
-    while (state.background.patternColors.length < 3) {
-      state.background.patternColors.push('#ECE5FF');
-    }
-  }
-
-  function syncPatternColorInputs() {
-    ensurePatternColors();
-    for (let i = 1; i <= 3; i++) {
-      const picker = document.getElementById(`pattern-color-${i}`);
-      const hex = document.getElementById(`pattern-color-${i}-hex`);
-      if (!picker || !hex) continue;
-      picker.value = state.background.patternColors[i - 1];
-      hex.value = state.background.patternColors[i - 1].toUpperCase();
-    }
-  }
-
-  function bindPatternToneInputs() {
-    const intensity = document.getElementById('pattern-intensity');
-    const grain = document.getElementById('pattern-grain');
-
-    if (intensity) {
-      intensity.addEventListener('input', () => {
-        ensurePatternTuning();
-        state.background.patternIntensity = parseInt(intensity.value, 10);
-        const value = document.getElementById('pattern-intensity-value');
-        if (value) value.textContent = `${state.background.patternIntensity}%`;
-        requestRender();
-      });
-    }
-
-    if (grain) {
-      grain.addEventListener('input', () => {
-        ensurePatternTuning();
-        state.background.patternGrain = parseInt(grain.value, 10);
-        const value = document.getElementById('pattern-grain-value');
-        if (value) value.textContent = `${state.background.patternGrain}%`;
-        requestRender();
-      });
-    }
-  }
-
-  function ensurePatternTuning() {
-    const intensity = Number(state.background.patternIntensity);
-    const grain = Number(state.background.patternGrain);
-
-    state.background.patternIntensity = Number.isFinite(intensity) ? Math.max(0, Math.min(100, Math.round(intensity))) : 72;
-    state.background.patternGrain = Number.isFinite(grain) ? Math.max(0, Math.min(100, Math.round(grain))) : 0;
-  }
-
-  function syncPatternToneInputs() {
-    ensurePatternTuning();
-
-    const intensity = document.getElementById('pattern-intensity');
-    const intensityValue = document.getElementById('pattern-intensity-value');
-    const grain = document.getElementById('pattern-grain');
-    const grainValue = document.getElementById('pattern-grain-value');
-
-    if (intensity) intensity.value = state.background.patternIntensity;
-    if (intensityValue) intensityValue.textContent = `${state.background.patternIntensity}%`;
-    if (grain) grain.value = state.background.patternGrain;
-    if (grainValue) grainValue.textContent = `${state.background.patternGrain}%`;
-  }
-
-  function normalizeHexColor(value) {
-    if (!value) return null;
-    let normalized = value.trim();
-    if (!normalized.startsWith('#')) normalized = '#' + normalized;
-    if (!/^#[0-9a-fA-F]{6}$/.test(normalized)) return null;
-    return normalized.toUpperCase();
-  }
-
-  function updateBackgroundUI() {
-    renderGradientStops();
-    setSliderValue('gradient-angle', state.background.angle, `${state.background.angle}°`);
-
-    const solidColor = document.getElementById('solid-color');
-    const solidHex = document.getElementById('solid-color-hex');
-    if (solidColor && solidHex) {
-      solidColor.value = state.background.color;
-      solidHex.value = state.background.color;
-    }
-
-    for (let i = 1; i <= 4; i++) {
-      const input = document.getElementById(`mesh-color-${i}`);
-      if (input && state.background.meshColors[i - 1]) {
-        input.value = state.background.meshColors[i - 1];
-      }
-    }
-    setSliderValue('mesh-complexity', state.background.meshComplexity, `${state.background.meshComplexity}`);
-
-    syncPatternColorInputs();
-    syncPatternToneInputs();
-    renderPatternPresets();
-    syncBgTypeVisibility(state.background.type);
-  }
-
-  function setupSavedBackgroundPresetControls() {
-    const select = document.getElementById('saved-bg-preset-select');
-    const applyBtn = document.getElementById('btn-apply-bg-preset');
-    const saveBtn = document.getElementById('btn-save-bg-preset');
-    const deleteBtn = document.getElementById('btn-delete-bg-preset');
-    const hint = document.getElementById('saved-bg-preset-hint');
-    if (!select || !applyBtn || !saveBtn || !deleteBtn) return;
-
-    const refreshList = () => {
-      const presets = getAllBackgroundPresets();
-      const previousValue = select.value;
-
-      select.innerHTML = '';
-      for (const preset of presets) {
-        const option = document.createElement('option');
-        option.value = preset.id;
-        option.textContent = preset.source === 'custom' ? `${preset.name} (Custom)` : preset.name;
-        select.appendChild(option);
-      }
-
-      if (presets.some((preset) => preset.id === previousValue)) {
-        select.value = previousValue;
-      }
-
-      if (!select.value && presets[0]) {
-        select.value = presets[0].id;
-      }
-
-      updateHint();
-    };
-
-    const updateHint = () => {
-      const active = getAllBackgroundPresets().find((preset) => preset.id === select.value);
-      const isCustom = !!active && active.source === 'custom';
-      deleteBtn.disabled = !isCustom;
-
-      if (!active) {
-        if (hint) hint.textContent = 'No saved background presets available yet.';
-        return;
-      }
-
-      if (hint) {
-        hint.textContent = isCustom
-          ? 'Custom preset stored locally in this browser and available after refresh.'
-          : 'Built-in Spendaily preset. Save your own by clicking Save current.';
-      }
-    };
-
-    applyBtn.addEventListener('click', () => {
-      const active = getAllBackgroundPresets().find((preset) => preset.id === select.value);
-      if (!active) return;
-      applyBackgroundPresetToState(state, active.background);
-      updateBackgroundUI();
-      requestRender();
-    });
-
-    saveBtn.addEventListener('click', () => {
-      const inputName = prompt('Name this background preset:');
-      const presetName = (inputName || '').trim();
-      if (!presetName) return;
-
-      const customPreset = {
-        id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        name: presetName.slice(0, 48),
-        source: 'custom',
-        background: serializeBackgroundPreset(state.background),
-      };
-
-      customBackgroundPresets.push(customPreset);
-      persistCustomBackgroundPresets();
-      refreshList();
-      select.value = customPreset.id;
-      updateHint();
-    });
-
-    deleteBtn.addEventListener('click', () => {
-      const activeId = select.value;
-      const active = customBackgroundPresets.find((preset) => preset.id === activeId);
-      if (!active) return;
-
-      const shouldDelete = confirm(`Delete custom background preset \"${active.name}\"?`);
-      if (!shouldDelete) return;
-
-      customBackgroundPresets = customBackgroundPresets.filter((preset) => preset.id !== activeId);
-      persistCustomBackgroundPresets();
-      refreshList();
-    });
-
-    select.addEventListener('change', updateHint);
-    refreshList();
-  }
-
-  function getAllBackgroundPresets() {
-    return [...BUILTIN_BACKGROUND_PRESETS, ...customBackgroundPresets];
-  }
-
-  function applyBackgroundPresetToState(targetState, backgroundPreset) {
-    if (!targetState || !backgroundPreset) return;
-    const merged = cloneBackgroundState({
-      ...targetState.background,
-      ...backgroundPreset,
-    });
-    targetState.background = merged;
-    targetState.background.type = backgroundPreset.type || targetState.background.type;
-  }
-
-  function serializeBackgroundPreset(rawBackground) {
-    const normalized = cloneBackgroundState(rawBackground);
-    return {
-      type: normalized.type,
-      colors: [...normalized.colors],
-      stops: [...normalized.stops],
-      angle: normalized.angle,
-      color: normalized.color,
-      patternId: normalized.patternId,
-      patternColors: [...normalized.patternColors],
-      patternIntensity: normalized.patternIntensity,
-      patternGrain: normalized.patternGrain,
-      meshColors: [...normalized.meshColors],
-      meshComplexity: normalized.meshComplexity,
-    };
-  }
-
-  function loadCustomBackgroundPresets() {
+  function aiFail(e) { aiBusy(false); const el = $('ai-error'); el.textContent = e.message || String(e); el.classList.remove('hidden'); toast('Kimi error', true); }
+
+  async function aiCopy() {
+    const image = screenshotDataURL();
+    aiBusy(true, image ? 'Reading screenshot…' : 'Writing copy…');
     try {
-      const raw = localStorage.getItem(CUSTOM_BG_STORAGE_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-
-      return parsed
-        .map((item) => {
-          if (!item || typeof item !== 'object') return null;
-          const name = typeof item.name === 'string' && item.name.trim() ? item.name.trim().slice(0, 48) : 'Custom Preset';
-          const id = typeof item.id === 'string' && item.id ? item.id : `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-          return {
-            id,
-            name,
-            source: 'custom',
-            background: serializeBackgroundPreset(item.background),
-          };
-        })
-        .filter(Boolean);
-    } catch (_) {
-      return [];
-    }
+      const note = $('ai-brief').value || screen().screenNote;
+      const out = await Kimi.copy({ screenNote: note, image });
+      const h = screen().header;
+      if (out.eyebrow) { h.eyebrow.text = out.eyebrow; h.eyebrow.show = true; }
+      if (out.headline && out.headline.length) h.headline.lines = out.headline;
+      if (out.subtitle) { h.subtitle.text = out.subtitle; h.subtitle.show = true; }
+      aiBusy(false); syncAllPanels(); requestRender(); toast('Copy updated');
+    } catch (e) { aiFail(e); }
   }
 
-  function persistCustomBackgroundPresets() {
+  async function aiPills() {
+    const image = screenshotDataURL();
+    aiBusy(true, image ? 'Reading screenshot…' : 'Designing pills…');
     try {
-      const payload = customBackgroundPresets.map((preset) => ({
-        id: preset.id,
-        name: preset.name,
-        background: serializeBackgroundPreset(preset.background),
-      }));
-      localStorage.setItem(CUSTOM_BG_STORAGE_KEY, JSON.stringify(payload));
-    } catch (_) {
-      // Ignore storage quota or browser privacy mode failures.
-    }
+      const note = $('ai-brief').value || screen().screenNote;
+      const headline = screen().header.headline.lines.map((l) => l.text).join(' ');
+      const generated = await Kimi.pills({ screenNote: note, headline, count: 5, avoid: avoidTitles(), image });
+      const rating = screen().pills.find((p) => p.kind === 'rating');
+      screen().pills = generated.map((p, i) => makePill(p, i));
+      if (rating) screen().pills.push(rating);
+      arrangePills(screen());
+      const saved = addToLibrary(generated);
+      aiBusy(false); renderPillList(); renderLibrary(); requestRender();
+      toast(`Added ${generated.length} pills${saved ? ` · ${saved} new saved` : ''}`);
+    } catch (e) { aiFail(e); }
   }
 
-  // ==================== PHONE PANEL ====================
-  function setupPhonePanel() {
-    // Phone position sliders
-    bindSlider('phone-scale', (val) => {
-      state.phoneScale = val;
-      document.getElementById('phone-scale-value').textContent = `${val}%`;
-      requestRender();
-    });
-    bindSlider('phone-y', (val) => {
-      state.phoneY = val;
-      document.getElementById('phone-y-value').textContent = `${val}%`;
-      requestRender();
-    });
-    bindSlider('phone-x', (val) => {
-      state.phoneX = val;
-      document.getElementById('phone-x-value').textContent = `${val}%`;
-      requestRender();
-    });
-    bindSlider('phone-rotation', (val) => {
-      state.phoneRotation = val;
-      document.getElementById('phone-rotation-value').textContent = `${val}°`;
-      requestRender();
-    });
-
-    // Second phone sliders
-    bindSlider('phone2-scale', (val) => {
-      state.phone2Scale = val;
-      document.getElementById('phone2-scale-value').textContent = `${val}%`;
-      requestRender();
-    });
-    bindSlider('phone2-y', (val) => {
-      state.phone2Y = val;
-      document.getElementById('phone2-y-value').textContent = `${val}%`;
-      requestRender();
-    });
-    bindSlider('phone2-x', (val) => {
-      state.phone2X = val;
-      document.getElementById('phone2-x-value').textContent = `${val}%`;
-      requestRender();
-    });
-    bindSlider('phone2-rotation', (val) => {
-      state.phone2Rotation = val;
-      document.getElementById('phone2-rotation-value').textContent = `${val}°`;
-      requestRender();
-    });
-
-    // Frame type toggle (iPhone / Android)
-    document.querySelectorAll('.frame-type-btn').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('.frame-type-btn').forEach((b) => b.classList.remove('active'));
-        btn.classList.add('active');
-        state.frameType = btn.dataset.frameType;
-        requestRender();
-      });
-    });
-
-    // Shadow toggle
-    document.getElementById('phone-shadow').addEventListener('change', (e) => {
-      state.phoneShadow = e.target.checked;
-      requestRender();
-    });
-
-    // Shadow intensity
-    bindSlider('shadow-intensity', (val) => {
-      state.shadowIntensity = val;
-      document.getElementById('shadow-intensity-value').textContent = `${val}%`;
-      requestRender();
-    });
-
-    // Shadow blur
-    bindSlider('shadow-blur', (val) => {
-      state.shadowBlur = val;
-      document.getElementById('shadow-blur-value').textContent = val;
-      requestRender();
-    });
-
-    // Screen brightness
-    bindSlider('screen-brightness', (val) => {
-      state.screenBrightness = val;
-      document.getElementById('screen-brightness-value').textContent = val;
-      requestRender();
-    });
+  async function aiFonts() {
+    aiBusy(true, 'Pairing fonts…');
+    try {
+      const out = await Kimi.fonts({ vibe: 'calm, premium, friendly budgeting app', available: FONTS });
+      screen().fonts.display = out.display; screen().fonts.body = out.body;
+      aiBusy(false); $('font-display').value = out.display; $('font-body').value = out.body; updateFontPreview(); requestRender();
+      toast(out.reason ? `Fonts: ${out.display} + ${out.body}` : 'Fonts updated');
+    } catch (e) { aiFail(e); }
   }
 
-  // ==================== TABS ====================
-  function setupTabs() {
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const tab = btn.dataset.tab;
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
-        document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === tab));
-      });
-    });
-  }
-
-  // ==================== NAVIGATION ====================
-  function setupNavigation() {
-    const appSection = document.querySelector('.app-main:not(.social-main)');
-    const socialSection = document.getElementById('social-section');
-    const navBtns = document.querySelectorAll('.nav-btn');
-    const appstoreOnlyEls = document.querySelectorAll('.appstore-only');
-
-    navBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        const section = btn.dataset.section;
-        navBtns.forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-
-        if (section === 'social') {
-          appSection.classList.add('hidden');
-          socialSection.classList.remove('hidden');
-          appstoreOnlyEls.forEach(el => el.classList.add('hidden'));
-          if (window.SocialApp) SocialApp.activate();
-        } else {
-          socialSection.classList.add('hidden');
-          appSection.classList.remove('hidden');
-          appstoreOnlyEls.forEach(el => el.classList.remove('hidden'));
-          if (window.SocialApp) SocialApp.deactivate();
-          // Switch frame type based on section
-          if (section === 'googleplay') {
-            state.frameType = 'android';
-          } else {
-            state.frameType = 'iphone';
-          }
-          // Sync the frame-type toggle buttons in the Phone tab
-          document.querySelectorAll('.frame-type-btn').forEach(b => {
-            b.classList.toggle('active', b.dataset.frameType === state.frameType);
-          });
-          requestRender();
-        }
-      });
-    });
-  }
-
-  // ==================== LOGO PANEL ====================
-  function setupLogoPanel() {
-    const zone = document.getElementById('logo-upload-zone');
-    const input = document.getElementById('logo-upload-input');
-    const preview = document.getElementById('logo-upload-preview');
-    const placeholder = document.getElementById('logo-upload-placeholder');
-    const removeBtn = document.getElementById('logo-upload-remove');
-    if (!zone) return;
-
-    zone.addEventListener('click', () => input.click());
-    zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag-over'); });
-    zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
-    zone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      zone.classList.remove('drag-over');
-      const file = e.dataTransfer.files[0];
-      if (file && file.type.startsWith('image/')) loadLogo(file);
-    });
-    input.addEventListener('change', () => { if (input.files[0]) loadLogo(input.files[0]); });
-    removeBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      state.logo = null;
-      preview.classList.add('hidden');
-      removeBtn.classList.add('hidden');
-      placeholder.classList.remove('hidden');
-      zone.classList.remove('has-image');
-      requestRender();
-    });
-
-    function loadLogo(file) {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const img = new Image();
-        img.onload = () => {
-          state.logo = img;
-          preview.src = ev.target.result;
-          preview.classList.remove('hidden');
-          removeBtn.classList.remove('hidden');
-          placeholder.classList.add('hidden');
-          zone.classList.add('has-image');
-          requestRender();
+  async function aiSet() {
+    const count = Math.max(2, Math.min(10, +$('ai-set-count').value || 5));
+    aiBusy(true, `Generating ${count} screens…`);
+    try {
+      const paletteIds = brand.palettes.map((p) => p.id);
+      const out = await Kimi.screenSet({ brief: $('ai-brief').value, count, paletteIds, avoid: avoidTitles(), onProgress: (m) => { $('ai-status-text').textContent = m; } });
+      if (!out.length) throw new Error('No screens returned');
+      out.forEach((sc) => addToLibrary(sc.pills || []));
+      screens = out.map((sc) => {
+        const def = {
+          name: sc.name, eyebrow: sc.eyebrow, theme: 'light',
+          bg: brand.gradients.lavender, headline: sc.headline, subtitle: sc.subtitle,
+          screenNote: sc.screenNote, pills: sc.pills,
         };
-        img.src = ev.target.result;
-      };
-      reader.readAsDataURL(file);
-    }
-
-    bindSlider('logo-scale', (val) => {
-      state.logoScale = val;
-      document.getElementById('logo-scale-value').textContent = `${val}%`;
-      requestRender();
-    });
-    bindSlider('logo-x', (val) => {
-      state.logoX = val;
-      document.getElementById('logo-x-value').textContent = `${val}%`;
-      requestRender();
-    });
-    bindSlider('logo-y', (val) => {
-      state.logoY = val;
-      document.getElementById('logo-y-value').textContent = `${val}%`;
-      requestRender();
-    });
-    bindSlider('logo-opacity', (val) => {
-      state.logoOpacity = val;
-      document.getElementById('logo-opacity-value').textContent = `${val}%`;
-      requestRender();
-    });
+        const built = buildScreen(def);
+        if (sc.palette) applyPalette(sc.palette, built);
+        return built;
+      });
+      activeIndex = 0; selectedPillId = null;
+      aiBusy(false); renderScreenTabs(); syncAllPanels(); renderLibrary(); requestRender(); toast(`Generated ${screens.length} screens`);
+    } catch (e) { aiFail(e); }
   }
 
-  // ==================== EXPORT ====================
-  function setupExport() {
-    document.getElementById('btn-export').addEventListener('click', () => {
-      // Delegate to social export if social section is active
-      const socialSection = document.getElementById('social-section');
-      if (socialSection && !socialSection.classList.contains('hidden') && window.SocialApp) {
-        document.getElementById('social-btn-export')?.click();
-        return;
-      }
-      exportImage();
-    });
+  // ──────────────────────────────────────────────────────────────────────────
+  // Export
+  // ──────────────────────────────────────────────────────────────────────────
+  function renderToBlob(index) {
+    const off = document.createElement('canvas');
+    const [w, h] = DEVICE_RES[device];
+    off.width = w; off.height = h;
+    renderScreenTo(off, index);
+    return new Promise((res) => off.toBlob((b) => res(b), 'image/png'));
+  }
 
-    const exportAllBtn = document.getElementById('btn-export-all-variants');
-    if (exportAllBtn) {
-      exportAllBtn.addEventListener('click', async () => {
-        exportAllBtn.disabled = true;
-        const originalText = exportAllBtn.textContent;
-        exportAllBtn.textContent = 'Exporting...';
+  async function exportCurrent() {
+    await document.fonts.ready.catch(() => {});
+    const blob = await renderToBlob(activeIndex);
+    downloadBlob(blob, fileName(screen(), activeIndex));
+    toast('Exported PNG');
+  }
 
-        try {
-          await exportAllVariants();
-        } finally {
-          exportAllBtn.disabled = false;
-          exportAllBtn.textContent = originalText;
-        }
+  async function exportAll() {
+    await document.fonts.ready.catch(() => {});
+    if (typeof JSZip === 'undefined') { toast('ZIP library missing', true); return; }
+    toast('Rendering all screens…');
+    const zip = new JSZip();
+    for (let i = 0; i < screens.length; i++) {
+      const blob = await renderToBlob(i);
+      zip.file(fileName(screens[i], i), blob);
+    }
+    const out = await zip.generateAsync({ type: 'blob' });
+    downloadBlob(out, `${brand.id}-${device}-screenshots.zip`);
+    toast(`Exported ${screens.length} screens`);
+  }
+
+  function fileName(s, i) {
+    const safe = (s.name || 'screen').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    return `${brand.id}-${device}-${String(i + 1).padStart(2, '0')}-${safe}.png`;
+  }
+  function downloadBlob(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Misc
+  // ──────────────────────────────────────────────────────────────────────────
+  let toastTimer = null;
+  function toast(msg, err) {
+    const el = $('toast');
+    el.textContent = msg; el.className = `toast${err ? ' err' : ''}`;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.add('hidden'), 2400);
+  }
+  function escapeHtml(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+  function escapeAttr(s) { return String(s == null ? '' : s).replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Boot
+  // ──────────────────────────────────────────────────────────────────────────
+  function boot() {
+    initBrandPicker();
+    setupCanvasInteraction();
+    // Dev affordance: ?dev=1 auto-selects the first brand for headless rendering.
+    // Optional &screen=N (1-based) and &device=android jump to a specific view.
+    const params = new URLSearchParams(location.search);
+    if (params.get('dev') === '1') {
+      const first = Object.values(window.BRANDS || {})[0];
+      if (first) chooseBrand(first).then(() => {
+        if (params.get('device') === 'android') setDevice('android');
+        const n = parseInt(params.get('screen'), 10);
+        if (n >= 1 && n <= screens.length) switchScreen(n - 1);
+        const panel = params.get('panel');
+        if (panel) { const t = document.querySelector(`.ptab[data-tab="${panel}"]`); if (t) t.click(); }
+        if (params.get('bleed')) { const b = document.querySelector(`[data-bleed="${params.get('bleed')}"]`); if (b) b.click(); }
+        if (params.get('neighbors') === '1') { const c = $('show-neighbors'); c.checked = true; c.dispatchEvent(new Event('change')); }
+        if (params.get('addphone') === '1') $('btn-add-phone').click();
       });
     }
   }
-
-  function exportImage() {
-    // Render at full resolution
-    const exportCanvas = document.createElement('canvas');
-    exportCanvas.width = state.canvasWidth;
-    exportCanvas.height = state.canvasHeight;
-
-    // Copy state for export
-    Renderer.render(exportCanvas, state);
-
-    exportCanvas.toBlob((blob) => {
-      if (!blob) return;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const timestamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
-      a.download = `ad-screenshot-${state.canvasWidth}x${state.canvasHeight}-${timestamp}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 'image/png');
-  }
-
-  async function exportAllVariants() {
-    if (!Array.isArray(variants) || variants.length === 0) return;
-
-    const timestamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
-    if (!window.JSZip || typeof window.JSZip !== 'function') {
-      await downloadVariantsIndividually(timestamp);
-      return;
-    }
-
-    const zip = new window.JSZip();
-    const usedFileNames = new Set();
-    let addedCount = 0;
-
-    for (let i = 0; i < variants.length; i++) {
-      const variant = variants[i];
-      const blob = await exportStateAsBlob(variant.state);
-      if (!blob) continue;
-
-      const safeName = toFileSafeName(variant.name || `variant-${i + 1}`);
-      const baseFileName = `ad-${safeName}-${variant.state.canvasWidth}x${variant.state.canvasHeight}-${timestamp}.png`;
-      const uniqueFileName = getUniqueFileName(baseFileName, usedFileNames);
-      usedFileNames.add(uniqueFileName);
-
-      zip.file(uniqueFileName, blob);
-      addedCount += 1;
-    }
-
-    if (addedCount === 0) return;
-
-    const zipBlob = await zip.generateAsync({
-      type: 'blob',
-      compression: 'DEFLATE',
-      compressionOptions: { level: 6 },
-    });
-
-    downloadBlob(zipBlob, `ad-variants-${timestamp}.zip`);
-  }
-
-  async function downloadVariantsIndividually(timestamp) {
-    for (let i = 0; i < variants.length; i++) {
-      const variant = variants[i];
-      const blob = await exportStateAsBlob(variant.state);
-      if (!blob) continue;
-
-      const safeName = toFileSafeName(variant.name || `variant-${i + 1}`);
-      downloadBlob(blob, `ad-${safeName}-${variant.state.canvasWidth}x${variant.state.canvasHeight}-${timestamp}.png`);
-    }
-  }
-
-  function getUniqueFileName(fileName, usedFileNames) {
-    if (!usedFileNames.has(fileName)) return fileName;
-
-    const dotIndex = fileName.lastIndexOf('.');
-    const hasExtension = dotIndex > 0;
-    const base = hasExtension ? fileName.slice(0, dotIndex) : fileName;
-    const ext = hasExtension ? fileName.slice(dotIndex) : '';
-
-    let index = 2;
-    while (true) {
-      const candidate = `${base}-${index}${ext}`;
-      if (!usedFileNames.has(candidate)) return candidate;
-      index += 1;
-    }
-  }
-
-  function exportStateAsBlob(renderState) {
-    return new Promise((resolve) => {
-      if (!renderState) {
-        resolve(null);
-        return;
-      }
-
-      const exportCanvas = document.createElement('canvas');
-      exportCanvas.width = renderState.canvasWidth;
-      exportCanvas.height = renderState.canvasHeight;
-      Renderer.render(exportCanvas, renderState);
-
-      exportCanvas.toBlob((blob) => {
-        resolve(blob || null);
-      }, 'image/png');
-    });
-  }
-
-  function downloadBlob(blob, fileName) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }
-
-  function toFileSafeName(input) {
-    return (input || 'variant')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 40) || 'variant';
-  }
-
-  // ==================== RESET ====================
-  function setupReset() {
-    document.getElementById('btn-reset').addEventListener('click', () => {
-      if (!confirm('Reset the active variant to defaults?')) return;
-      const freshState = createDefaultState();
-      const active = getActiveVariant();
-
-      if (active) {
-        active.state = freshState;
-      }
-
-      state = freshState;
-      syncStateToUI();
-      renderVariantTabs();
-      requestRender();
-    });
-  }
-
-  // ==================== ZOOM ====================
-  function setupZoom() {
-    let zoomLevel = 'fit';
-    const zoomLevels = ['fit', 25, 50, 75, 100];
-    let zoomIdx = 0;
-
-    const display = document.getElementById('zoom-level');
-
-    function applyZoom() {
-      if (zoomLevel === 'fit') {
-        canvas.style.maxWidth = '100%';
-        canvas.style.maxHeight = '100%';
-        canvas.style.width = 'auto';
-        canvas.style.height = 'auto';
-        display.textContent = 'Fit';
-      } else {
-        const scale = zoomLevel / 100;
-        canvas.style.maxWidth = 'none';
-        canvas.style.maxHeight = 'none';
-        canvas.style.width = `${state.canvasWidth * scale}px`;
-        canvas.style.height = `${state.canvasHeight * scale}px`;
-        display.textContent = `${zoomLevel}%`;
-      }
-    }
-
-    document.getElementById('zoom-in').addEventListener('click', () => {
-      if (zoomIdx < zoomLevels.length - 1) zoomIdx++;
-      zoomLevel = zoomLevels[zoomIdx];
-      applyZoom();
-    });
-
-    document.getElementById('zoom-out').addEventListener('click', () => {
-      if (zoomIdx > 0) zoomIdx--;
-      zoomLevel = zoomLevels[zoomIdx];
-      applyZoom();
-    });
-  }
-
-  // ==================== CANVAS SIZE ====================
-  function setupCanvasSize() {
-    document.getElementById('canvas-size').addEventListener('change', (e) => {
-      const [w, h] = e.target.value.split('x').map(Number);
-      const prevW = state.canvasWidth;
-      state.canvasWidth = w;
-      state.canvasHeight = h;
-      canvas.width = w;
-      canvas.height = h;
-      document.getElementById('canvas-info').textContent = `${w} × ${h} px`;
-
-      // Scale text sizes proportionally relative to previous size
-      const scaleFactor = w / prevW;
-      for (const text of state.texts) {
-        text.size = Math.round(text.size * scaleFactor);
-      }
-      renderTextLayers();
-      requestRender();
-    });
-  }
-
-  // ==================== KEYBOARD SHORTCUTS ====================
-  function setupKeyboardShortcuts() {
-    document.addEventListener('keydown', (e) => {
-      // Ctrl/Cmd + S: Export
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault();
-        exportImage();
-      }
-      // Ctrl/Cmd + E: Export
-      if ((e.ctrlKey || e.metaKey) && e.key === 'e') {
-        e.preventDefault();
-        exportImage();
-      }
-    });
-  }
-
-  // ==================== HELPERS ====================
-  function bindSlider(id, onChange) {
-    const slider = document.getElementById(id);
-    if (!slider) return;
-    slider.addEventListener('input', () => {
-      onChange(parseFloat(slider.value));
-    });
-  }
-
-  // ==================== START ====================
-  document.addEventListener('DOMContentLoaded', init);
-
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
 })();

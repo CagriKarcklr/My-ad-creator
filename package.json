@@ -1,9 +1,9 @@
 {
-  "name": "ad-creator",
-  "version": "1.0.0",
-  "description": "App Store & Social Media Ad Screenshot Creator",
+  "name": "shotsmith",
+  "version": "2.0.0",
+  "description": "Spendaily App Store screenshot studio — phone mockups, two-tone headlines, floating feature pills, and Kimi-powered copy.",
   "scripts": {
-    "start": "npx serve . -p 3000 -s",
-    "dev": "npx serve . -p 3000 -s --cors"
+    "start": "node server.js",
+    "dev": "node server.js"
   }
 }

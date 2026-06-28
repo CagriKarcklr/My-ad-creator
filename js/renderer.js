@@ -1,898 +1,690 @@
 /**
- * Renderer — Canvas rendering engine
- * Draws backgrounds, phone mockups, text layers, and effects
+ * Renderer — canvas engine for App Store screenshots.
+ * Draws: background → header (eyebrow + two-tone headline + accent bar + subtitle)
+ *        → phone mockup (uploaded screenshot inside the real device frame)
+ *        → floating feature pills.
+ *
+ * The phone-mockup + alpha screen-detection logic is carried over from the
+ * previous renderer (battle-tested against the frame PNGs).
  */
-
 window.Renderer = (() => {
+  'use strict';
 
   // ── Frame configs ──────────────────────────────────────────────────────────
   const FRAMES = {
     iphone: {
       imgW: 1456, imgH: 3000,
-      // Screen insets as fractions of frame image size
-      screenLeft:   55   / 1456,
-      screenTop:    44   / 3000,
-      screenRight:  55   / 1456,
-      screenBottom: 40   / 3000,
+      screenLeft: 55 / 1456, screenTop: 44 / 3000,
+      screenRight: 55 / 1456, screenBottom: 40 / 3000,
       screenCornerRadius: 0.12,
       src: 'Iphone-frame-upscaled.png',
     },
     android: {
       imgW: 884, imgH: 1842,
-      // Fallback insets; runtime alpha detection adapts to updated frame PNGs.
-      screenLeft:   19   / 884,
-      screenTop:    19   / 1842,
-      screenRight:  19   / 884,
-      screenBottom: 23   / 1842,
+      screenLeft: 34 / 884, screenTop: 28 / 1842,
+      screenRight: 34 / 884, screenBottom: 30 / 1842,
       screenCornerRadius: 0.11,
-      src: 'Android-frame.png',
+      src: 'Android-frame.png?v=20260503a',
       autoDetectScreen: true,
     },
   };
+  const AUTO_SCREEN_BLEED_PAD_PX = 3;
+  const DESIGN_W = 1284; // metrics are tuned for this canvas width, then scaled
 
-  // Legacy constants kept for backward-compat (default to iPhone)
-  const FRAME_IMG_W = FRAMES.iphone.imgW;
-  const FRAME_IMG_H = FRAMES.iphone.imgH;
-  const PHONE_W_TO_H = FRAME_IMG_W / FRAME_IMG_H; // ≈ 0.4853
-
-  // Corner radius of the phone body (must match frame image corners)
-  const CORNER_RADIUS_RATIO = 0.22;
-
-  // Pre-load both frame images
   const frameImages = {};
   const frameRuntimeMeta = {};
   const detectedScreenMetrics = new Map();
+  const screenMaskByFrameImage = new WeakMap();
+  let onAssetLoad = null;
+
   for (const [key, cfg] of Object.entries(FRAMES)) {
     const img = new Image();
     img.onload = () => {
       frameImages[key] = img;
-      frameRuntimeMeta[key] = {
-        imgW: img.naturalWidth || cfg.imgW,
-        imgH: img.naturalHeight || cfg.imgH,
-      };
+      frameRuntimeMeta[key] = { imgW: img.naturalWidth || cfg.imgW, imgH: img.naturalHeight || cfg.imgH };
       if (cfg.autoDetectScreen) {
         const detected = detectScreenBoundsFromAlpha(img);
         if (detected) detectedScreenMetrics.set(key, detected);
       }
+      if (onAssetLoad) onAssetLoad();
     };
     img.src = cfg.src;
   }
 
-  // Keep legacy reference so existing code that checks frameImage still works
-  let frameImage = null;
-  const _legacyImg = new Image();
-  _legacyImg.onload = () => {
-    frameImage = _legacyImg;
-    frameImages.iphone = _legacyImg;
-    frameRuntimeMeta.iphone = {
-      imgW: _legacyImg.naturalWidth || FRAMES.iphone.imgW,
-      imgH: _legacyImg.naturalHeight || FRAMES.iphone.imgH,
-    };
-  };
-  _legacyImg.src = FRAMES.iphone.src;
-
-  const PATTERN_NOISE_TILE_CACHE = new Map();
-
   function getPhoneAspectRatio(frameType = 'iphone') {
-    const runtime = frameRuntimeMeta[frameType];
-    if (runtime && runtime.imgW && runtime.imgH) {
-      return runtime.imgW / runtime.imgH;
-    }
+    const r = frameRuntimeMeta[frameType];
+    if (r && r.imgW && r.imgH) return r.imgW / r.imgH;
     const cfg = FRAMES[frameType] || FRAMES.iphone;
     return cfg.imgW / cfg.imgH;
   }
 
+  // ── Alpha-based screen detection (for frames whose screen is a cutout) ──────
   function getResolvedScreenConfig(frameType, frameCfg, image) {
     if (!frameCfg.autoDetectScreen) return frameCfg;
-
     const cached = detectedScreenMetrics.get(frameType);
-    if (cached) {
-      return {
-        ...frameCfg,
-        ...cached,
-      };
-    }
-
+    if (cached) return { ...frameCfg, ...cached };
     const detected = detectScreenBoundsFromAlpha(image);
     if (!detected) return frameCfg;
-
     detectedScreenMetrics.set(frameType, detected);
-    return {
-      ...frameCfg,
-      ...detected,
-    };
+    return { ...frameCfg, ...detected };
   }
 
   function detectScreenBoundsFromAlpha(image, threshold = 8) {
     const W = image.naturalWidth || image.width;
     const H = image.naturalHeight || image.height;
     if (!W || !H) return null;
-
     const off = document.createElement('canvas');
-    off.width = W;
-    off.height = H;
+    off.width = W; off.height = H;
     const ctx = off.getContext('2d');
     ctx.drawImage(image, 0, 0, W, H);
-
     const data = ctx.getImageData(0, 0, W, H).data;
     const alphaAt = (x, y) => data[(y * W + x) * 4 + 3];
 
-    const seed = findTransparentSeedNearCenter(W, H, alphaAt, threshold);
-    if (!seed) return null;
-
-    const total = W * H;
-    const visited = new Uint8Array(total);
-    const qx = new Int32Array(total);
-    const qy = new Int32Array(total);
-
-    let minX = seed.x;
-    let maxX = seed.x;
-    let minY = seed.y;
-    let maxY = seed.y;
-    let area = 0;
-    let touchesEdge = false;
-
-    let head = 0;
-    let tail = 0;
-    const seedIdx = seed.y * W + seed.x;
-    visited[seedIdx] = 1;
-    qx[tail] = seed.x;
-    qy[tail] = seed.y;
-    tail++;
-
-    while (head < tail) {
-      const x = qx[head];
-      const y = qy[head];
-      head++;
-
-      area++;
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
-      if (x === 0 || x === W - 1 || y === 0 || y === H - 1) touchesEdge = true;
-
-      // Left
-      if (x > 0) {
-        const nx = x - 1;
-        const ny = y;
-        const idx = ny * W + nx;
-        if (!visited[idx] && alphaAt(nx, ny) <= threshold) {
-          visited[idx] = 1;
-          qx[tail] = nx;
-          qy[tail] = ny;
-          tail++;
-        }
-      }
-
-      // Right
-      if (x < W - 1) {
-        const nx = x + 1;
-        const ny = y;
-        const idx = ny * W + nx;
-        if (!visited[idx] && alphaAt(nx, ny) <= threshold) {
-          visited[idx] = 1;
-          qx[tail] = nx;
-          qy[tail] = ny;
-          tail++;
-        }
-      }
-
-      // Up
-      if (y > 0) {
-        const nx = x;
-        const ny = y - 1;
-        const idx = ny * W + nx;
-        if (!visited[idx] && alphaAt(nx, ny) <= threshold) {
-          visited[idx] = 1;
-          qx[tail] = nx;
-          qy[tail] = ny;
-          tail++;
-        }
-      }
-
-      // Down
-      if (y < H - 1) {
-        const nx = x;
-        const ny = y + 1;
-        const idx = ny * W + nx;
-        if (!visited[idx] && alphaAt(nx, ny) <= threshold) {
-          visited[idx] = 1;
-          qx[tail] = nx;
-          qy[tail] = ny;
-          tail++;
-        }
-      }
+    const isWindow = (x, y) => alphaAt(x, y) < 250;
+    const seed = findSeedNearCenter(W, H, isWindow);
+    const region = seed ? floodFill(W, H, isWindow, seed, 0.08, true) : null;
+    if (region) {
+      const mask = maskCanvasFromVisited(region.mask, W, H);
+      if (mask) screenMaskByFrameImage.set(image, mask);
+      const detected = boundsToInsets(region, W, H, 0);
+      const r = estimateCorner(region, W, H, isWindow);
+      if (Number.isFinite(r)) detected.screenCornerRadius = r;
+      return detected;
     }
 
-    // Ignore tiny transparent holes and edge-connected transparency.
-    if (touchesEdge) return null;
-    if (area < total * 0.08) return null;
-
-    const insetPad = 1;
-    minX = Math.max(0, minX + insetPad);
-    minY = Math.max(0, minY + insetPad);
-    maxX = Math.min(W - 1, maxX - insetPad);
-    maxY = Math.min(H - 1, maxY - insetPad);
-
-    return {
-      screenLeft: minX / W,
-      screenTop: minY / H,
-      screenRight: (W - (maxX + 1)) / W,
-      screenBottom: (H - (maxY + 1)) / H,
-    };
-  }
-
-  function findTransparentSeedNearCenter(W, H, alphaAt, threshold) {
-    const cx = Math.floor(W / 2);
-    const cy = Math.floor(H / 2);
-    const maxR = Math.max(cx, cy);
-
-    for (let r = 0; r <= maxR; r += 2) {
-      const x0 = Math.max(1, cx - r);
-      const x1 = Math.min(W - 2, cx + r);
-      const y0 = Math.max(1, cy - r);
-      const y1 = Math.min(H - 2, cy + r);
-
-      for (let x = x0; x <= x1; x += 2) {
-        if (alphaAt(x, y0) <= threshold) return { x, y: y0 };
-        if (alphaAt(x, y1) <= threshold) return { x, y: y1 };
-      }
-
-      for (let y = y0 + 2; y <= y1 - 2; y += 2) {
-        if (alphaAt(x0, y) <= threshold) return { x: x0, y };
-        if (alphaAt(x1, y) <= threshold) return { x: x1, y };
-      }
+    const isTransparent = (x, y) => alphaAt(x, y) <= threshold;
+    const tSeed = findSeedNearCenter(W, H, isTransparent);
+    const tBounds = tSeed ? floodFill(W, H, isTransparent, tSeed, 0.08) : null;
+    if (tBounds) {
+      const detected = boundsToInsets(tBounds, W, H, -AUTO_SCREEN_BLEED_PAD_PX);
+      const r = estimateCorner(tBounds, W, H, isTransparent);
+      if (Number.isFinite(r)) detected.screenCornerRadius = r;
+      return detected;
     }
-
     return null;
   }
 
-  /**
-   * Main render function — draws everything to the canvas
-   * @param {HTMLCanvasElement} canvas
-   * @param {Object} state — full application state
-   */
-  function render(canvas, state) {
-    const ctx = canvas.getContext('2d');
-    const W = canvas.width;
-    const H = canvas.height;
-
-    ctx.clearRect(0, 0, W, H);
-
-    // 1. Background
-    drawBackground(ctx, W, H, state.background);
-
-    // 2. Phone mockups
-    const layout = state.currentLayout;
-    if (layout) {
-      const phones = layout.phones;
-      for (let i = 0; i < phones.length; i++) {
-        const phoneDef = phones[i];
-        const screenshot = i === 0 ? state.screenshot : state.screenshot2;
-
-        // Merge layout defaults with user adjustments
-        let px, py, pw, rotation, perspective;
-        if (i === 0) {
-          pw = W * (state.phoneScale / 100);
-          px = W * (state.phoneX / 100);
-          py = H * (state.phoneY / 100);
-          rotation = state.phoneRotation;
-          perspective = state.phonePerspective || phoneDef.perspective || '';
-        } else {
-          pw = W * (state.phone2Scale / 100);
-          px = W * (state.phone2X / 100);
-          py = H * (state.phone2Y / 100);
-          rotation = state.phone2Rotation;
-          perspective = state.phone2Perspective || phoneDef.perspective || '';
-        }
-
-        const frameType = state.frameType || 'iphone';
-        const ph = pw / getPhoneAspectRatio(frameType);
-
-        drawPhoneMockup(ctx, px, py, pw, ph, screenshot, {
-          rotation: rotation,
-          frameColor: state.phoneFrameColor,
-          shadow: state.phoneShadow,
-          shadowIntensity: state.shadowIntensity / 100,
-          shadowBlur: state.shadowBlur,
-          screenBrightness: state.screenBrightness,
-          screenRadius: state.screenRadius,
-          perspective: perspective,
-          frameType: frameType,
-        });
-      }
+  function findSeedNearCenter(W, H, isMatch) {
+    const cx = Math.floor(W / 2), cy = Math.floor(H / 2);
+    const maxR = Math.max(cx, cy);
+    for (let r = 0; r <= maxR; r += 2) {
+      const x0 = Math.max(1, cx - r), x1 = Math.min(W - 2, cx + r);
+      const y0 = Math.max(1, cy - r), y1 = Math.min(H - 2, cy + r);
+      for (let x = x0; x <= x1; x += 2) { if (isMatch(x, y0)) return { x, y: y0 }; if (isMatch(x, y1)) return { x, y: y1 }; }
+      for (let y = y0 + 2; y <= y1 - 2; y += 2) { if (isMatch(x0, y)) return { x: x0, y }; if (isMatch(x1, y)) return { x: x1, y }; }
     }
-
-    // 3. Text layers
-    for (const text of state.texts) {
-      drawTextLayer(ctx, W, H, text);
-    }
-
-    // 4. Logo overlay
-    if (state.logo) {
-      drawLogoOverlay(ctx, W, H, state);
-    }
+    return null;
   }
 
-  /**
-   * Draw background (gradient, solid, or mesh)
-   */
-  function drawBackground(ctx, W, H, bg) {
-    if (bg.type === 'solid') {
-      ctx.fillStyle = bg.color || '#1a1a2e';
-      ctx.fillRect(0, 0, W, H);
-    } else if (bg.type === 'gradient') {
-      const angle = (bg.angle || 180) * Math.PI / 180;
-      const cx = W / 2;
-      const cy = H / 2;
-      const len = Math.sqrt(W * W + H * H) / 2;
-      const x1 = cx - Math.sin(angle) * len;
-      const y1 = cy - Math.cos(angle) * len;
-      const x2 = cx + Math.sin(angle) * len;
-      const y2 = cy + Math.cos(angle) * len;
-
-      const grad = ctx.createLinearGradient(x1, y1, x2, y2);
-      const colors = bg.colors || ['#667eea', '#764ba2'];
-      const stops = bg.stops || colors.map((_, i) => i / (colors.length - 1));
-
-      for (let i = 0; i < colors.length; i++) {
-        grad.addColorStop(stops[i] !== undefined ? stops[i] : i / (colors.length - 1), colors[i]);
-      }
-
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, W, H);
-    } else if (bg.type === 'pattern') {
-      drawPatternBackground(ctx, W, H, bg);
-    } else if (bg.type === 'mesh') {
-      drawMeshGradient(ctx, W, H, bg);
+  function floodFill(W, H, isMatch, seed, minAreaRatio = 0.08, includeVisited = false) {
+    const total = W * H;
+    const visited = new Uint8Array(total);
+    const qx = new Int32Array(total), qy = new Int32Array(total);
+    let minX = seed.x, maxX = seed.x, minY = seed.y, maxY = seed.y, area = 0, edge = false;
+    let head = 0, tail = 0;
+    visited[seed.y * W + seed.x] = 1; qx[tail] = seed.x; qy[tail] = seed.y; tail++;
+    while (head < tail) {
+      const x = qx[head], y = qy[head]; head++;
+      area++;
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+      if (x === 0 || x === W - 1 || y === 0 || y === H - 1) edge = true;
+      const push = (nx, ny) => { const i = ny * W + nx; if (!visited[i] && isMatch(nx, ny)) { visited[i] = 1; qx[tail] = nx; qy[tail] = ny; tail++; } };
+      if (x > 0) push(x - 1, y);
+      if (x < W - 1) push(x + 1, y);
+      if (y > 0) push(x, y - 1);
+      if (y < H - 1) push(x, y + 1);
     }
+    if (edge) return null;
+    if (area < total * minAreaRatio) return null;
+    const region = { minX, maxX, minY, maxY };
+    if (includeVisited) region.mask = visited;
+    return region;
   }
 
-  /**
-   * Draw a mesh gradient (multi-point organic gradient)
-   */
-  function drawMeshGradient(ctx, W, H, bg) {
-    const colors = bg.meshColors || ['#667eea', '#764ba2', '#f093fb', '#4facfe'];
-    const complexity = bg.meshComplexity || 5;
+  function maskCanvasFromVisited(visited, W, H) {
+    if (!(visited instanceof Uint8Array) || visited.length !== W * H) return null;
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const mctx = c.getContext('2d');
+    const img = mctx.createImageData(W, H);
+    const px = img.data;
+    for (let i = 0; i < visited.length; i++) { if (!visited[i]) continue; const p = i * 4; px[p] = 255; px[p + 1] = 255; px[p + 2] = 255; px[p + 3] = 255; }
+    mctx.putImageData(img, 0, 0);
+    return c;
+  }
 
-    // Base fill
-    ctx.fillStyle = colors[0];
-    ctx.fillRect(0, 0, W, H);
+  function boundsToInsets(b, W, H, pad = 1) {
+    const p = Number.isFinite(pad) ? pad : 1;
+    const minX = Math.max(0, b.minX + p), minY = Math.max(0, b.minY + p);
+    const maxX = Math.min(W - 1, b.maxX - p), maxY = Math.min(H - 1, b.maxY - p);
+    return { screenLeft: minX / W, screenTop: minY / H, screenRight: (W - (maxX + 1)) / W, screenBottom: (H - (maxY + 1)) / H };
+  }
 
-    // Create organic blobs for each color
-    const positions = [
-      { x: 0.2, y: 0.2 },
-      { x: 0.8, y: 0.15 },
-      { x: 0.75, y: 0.85 },
-      { x: 0.15, y: 0.8 },
-    ];
-
-    for (let i = 0; i < colors.length && i < 4; i++) {
-      const pos = positions[i];
-      const radius = (0.4 + complexity * 0.06) * Math.max(W, H);
-
-      const grad = ctx.createRadialGradient(
-        pos.x * W, pos.y * H, 0,
-        pos.x * W, pos.y * H, radius
-      );
-      grad.addColorStop(0, colors[i]);
-      grad.addColorStop(0.5, colors[i] + '80');
-      grad.addColorStop(1, colors[i] + '00');
-
-      ctx.globalCompositeOperation = 'screen';
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, W, H);
+  function estimateCorner(b, W, H, isT) {
+    const minX = Math.max(0, b.minX), maxX = Math.min(W - 1, b.maxX);
+    const minY = Math.max(0, b.minY), maxY = Math.min(H - 1, b.maxY);
+    if (maxX <= minX || maxY <= minY) return null;
+    const screenH = maxY - minY + 1, screenW = maxX - minX + 1;
+    const scanRows = Math.min(Math.max(24, Math.floor(screenH * 0.28)), 240);
+    let lMax = 0, rMax = 0, rows = 0;
+    for (let y = minY; y <= Math.min(maxY, minY + scanRows); y++) {
+      let first = -1; for (let x = minX; x <= maxX; x++) { if (isT(x, y)) { first = x; break; } }
+      if (first < 0) continue;
+      let last = -1; for (let x = maxX; x >= minX; x--) { if (isT(x, y)) { last = x; break; } }
+      if (last < 0) continue;
+      rows++; lMax = Math.max(lMax, first - minX); rMax = Math.max(rMax, maxX - last);
     }
-
-    ctx.globalCompositeOperation = 'source-over';
-
-    // Optional: add subtle noise overlay for texture
-    // (skip for performance in real-time preview)
+    if (rows < 6) return null;
+    const radiusPx = Math.max(lMax, rMax) + 1;
+    const maxRadiusPx = Math.max(2, Math.floor(screenW * 0.22));
+    return Math.max(2, Math.min(maxRadiusPx, radiusPx)) / W;
   }
 
-  function drawPatternBackground(ctx, W, H, bg) {
-    const patterns = window.BackgroundLibrary && window.BackgroundLibrary.PATTERNS;
-    if (!patterns || patterns.length === 0) {
-      ctx.fillStyle = '#E8E8E8';
-      ctx.fillRect(0, 0, W, H);
-      return;
-    }
-
-    const colors = Array.isArray(bg.patternColors) && bg.patternColors.length >= 3
-      ? bg.patternColors
-      : ['#8D7EDB', '#C5B8F0', '#ECE5FF'];
-    const intensity = normalizePatternPercent(bg.patternIntensity, 72);
-    const grain = normalizePatternPercent(bg.patternGrain, 0);
-    const pattern = patterns.find(p => p.id === bg.patternId) || patterns[0];
-
-    // Keep the library API backward-compatible by passing a single accent color.
-    pattern.generate(ctx, W, H, colors[0]);
-    applyPatternColorOverlay(ctx, W, H, colors, intensity);
-    applyPatternGrain(ctx, W, H, grain);
-  }
-
-  function applyPatternColorOverlay(ctx, W, H, colors, intensity = 72) {
-    if (!Array.isArray(colors) || colors.length < 2) return;
-
-    const alphaScale = normalizePatternPercent(intensity, 72) / 100;
-    if (alphaScale <= 0) return;
-
-    ctx.save();
-    ctx.globalCompositeOperation = 'soft-light';
-    ctx.globalAlpha = 0.72 * alphaScale;
-
-    const linear = ctx.createLinearGradient(0, 0, W, H);
-    linear.addColorStop(0, colors[0]);
-    linear.addColorStop(0.55, colors[1]);
-    linear.addColorStop(1, colors[2] || colors[1]);
-    ctx.fillStyle = linear;
-    ctx.fillRect(0, 0, W, H);
-
-    const radial = ctx.createRadialGradient(W * 0.84, H * 0.18, 0, W * 0.84, H * 0.18, Math.max(W, H) * 0.6);
-    radial.addColorStop(0, `${colors[2] || colors[1]}aa`);
-    radial.addColorStop(1, `${colors[2] || colors[1]}00`);
-    ctx.globalAlpha = 0.35 * alphaScale;
-    ctx.fillStyle = radial;
-    ctx.fillRect(0, 0, W, H);
-
-    ctx.restore();
-  }
-
-  function applyPatternGrain(ctx, W, H, grain = 0) {
-    const amount = normalizePatternPercent(grain, 0);
-    if (amount <= 0) return;
-
-    const tile = getPatternNoiseTile(amount);
-    if (!tile) return;
-
-    const texture = ctx.createPattern(tile, 'repeat');
-    if (!texture) return;
-
-    ctx.save();
-    ctx.globalCompositeOperation = 'soft-light';
-    ctx.globalAlpha = 0.2 + (amount / 100) * 0.45;
-    ctx.fillStyle = texture;
-    ctx.fillRect(0, 0, W, H);
-    ctx.restore();
-  }
-
-  function getPatternNoiseTile(amount) {
-    const level = Math.max(0, Math.min(100, Math.round(amount)));
-    const cacheKey = `${level}`;
-    if (PATTERN_NOISE_TILE_CACHE.has(cacheKey)) {
-      return PATTERN_NOISE_TILE_CACHE.get(cacheKey);
-    }
-
-    const tileSize = 160;
-    const tile = document.createElement('canvas');
-    tile.width = tileSize;
-    tile.height = tileSize;
-
-    const tctx = tile.getContext('2d');
-    const image = tctx.createImageData(tileSize, tileSize);
-    const data = image.data;
-    const noiseStrength = level / 100;
-
-    for (let i = 0; i < data.length; i += 4) {
-      const variance = (Math.random() - 0.5) * 150 * noiseStrength;
-      const shade = Math.max(0, Math.min(255, 128 + variance));
-      data[i] = shade;
-      data[i + 1] = shade;
-      data[i + 2] = shade;
-      data[i + 3] = Math.round(90 * noiseStrength);
-    }
-
-    tctx.putImageData(image, 0, 0);
-    PATTERN_NOISE_TILE_CACHE.set(cacheKey, tile);
-    return tile;
-  }
-
-  function normalizePatternPercent(value, fallback) {
-    const num = Number(value);
-    if (!Number.isFinite(num)) return fallback;
-    return Math.max(0, Math.min(100, num));
-  }
-
-  /**
-   * Draw rounded rectangle path
-   */
-  function roundedRectPath(ctx, x, y, w, h, r) {
+  // ── Small helpers ───────────────────────────────────────────────────────────
+  function roundRect(ctx, x, y, w, h, r) {
     r = Math.min(r, w / 2, h / 2);
     ctx.beginPath();
     ctx.moveTo(x + r, y);
-    ctx.lineTo(x + w - r, y);
-    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-    ctx.lineTo(x + w, y + h - r);
-    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-    ctx.lineTo(x + r, y + h);
-    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-    ctx.lineTo(x, y + r);
-    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath();
   }
 
-  /**
-   * Apply a simulated perspective transform using 2D canvas skew/scale.
-   * Modifies the current transform matrix around the phone's center.
-   */
-  function applyPerspectiveTransform(ctx, cx, cy, w, h, perspective) {
-    ctx.translate(cx, cy);
-
-    switch (perspective) {
-      case 'left':
-        // Phone angled slightly to the left — right side recedes
-        ctx.transform(0.95, 0.04, 0, 1.02, 0, 0);
-        break;
-      case 'right':
-        // Phone angled slightly to the right — left side recedes
-        ctx.transform(0.95, -0.04, 0, 1.02, 0, 0);
-        break;
-      case 'left-strong':
-        // Stronger left angle
-        ctx.transform(0.88, 0.08, 0, 1.04, 0, 0);
-        break;
-      case 'right-strong':
-        // Stronger right angle
-        ctx.transform(0.88, -0.08, 0, 1.04, 0, 0);
-        break;
-      case 'flat':
-        // Laying flat — foreshortened vertically
-        ctx.transform(1, 0, 0.15, 0.75, 0, 0);
-        break;
-      case 'tilt-forward':
-        // Slight forward tilt
-        ctx.transform(1, 0, 0, 0.92, 0, 0);
-        break;
-      case 'isometric-left':
-        // Isometric left view
-        ctx.transform(0.85, 0.1, -0.1, 0.95, 0, 0);
-        break;
-      case 'isometric-right':
-        // Isometric right view
-        ctx.transform(0.85, -0.1, 0.1, 0.95, 0, 0);
-        break;
-      default:
-        break;
+  function wrapText(ctx, text, maxWidth) {
+    const words = String(text).split(' ');
+    const lines = [];
+    let cur = '';
+    for (const w of words) {
+      const test = cur ? cur + ' ' + w : w;
+      if (ctx.measureText(test).width > maxWidth && cur) { lines.push(cur); cur = w; }
+      else cur = test;
     }
-
-    ctx.translate(-cx, -cy);
+    if (cur) lines.push(cur);
+    return lines.length ? lines : [''];
   }
 
-  /**
-   * Draw a single iPhone mockup
-   * @param {CanvasRenderingContext2D} ctx
-   * @param {number} cx — center X
-   * @param {number} cy — center Y
-   * @param {number} w — phone width
-   * @param {number} h — phone height
-   * @param {HTMLImageElement|null} screenshot
-   * @param {Object} opts
-   */
-  function drawPhoneMockup(ctx, cx, cy, w, h, screenshot, opts = {}) {
-    const {
-      rotation = 0,
-      shadow = true,
-      shadowIntensity = 0.35,
-      shadowBlur = 60,
-      screenBrightness = 0,
-      perspective = '',
-      frameType = 'iphone',
-    } = opts;
+  function fontStack(name) {
+    return `"${name}", "SF Pro Display", -apple-system, system-ui, sans-serif`;
+  }
 
+  // ── Background ───────────────────────────────────────────────────────────────
+  function drawBackground(ctx, W, H, bg, theme) {
+    if (!bg || bg.type === 'solid') {
+      ctx.fillStyle = (bg && bg.color) || '#EDE6FB';
+      ctx.fillRect(0, 0, W, H);
+    } else if (bg.type === 'gradient') {
+      const angle = (bg.angle || 180) * Math.PI / 180;
+      const cx = W / 2, cy = H / 2, len = Math.sqrt(W * W + H * H) / 2;
+      const grad = ctx.createLinearGradient(cx - Math.sin(angle) * len, cy - Math.cos(angle) * len, cx + Math.sin(angle) * len, cy + Math.cos(angle) * len);
+      const colors = bg.colors || ['#EDE6FB', '#FBE6DD'];
+      const stops = bg.stops || colors.map((_, i) => i / (colors.length - 1));
+      colors.forEach((c, i) => grad.addColorStop(stops[i] != null ? stops[i] : i / (colors.length - 1), c));
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H);
+    } else if (bg.type === 'mesh') {
+      drawMesh(ctx, W, H, bg);
+    }
+    // Soft top glow behind the headline (matches the reference warmth)
+    if (bg && bg.glow !== false && (!bg.type || bg.type !== 'solid')) {
+      const glow = ctx.createRadialGradient(W * 0.5, H * 0.12, 0, W * 0.5, H * 0.12, W * 0.6);
+      const warm = (theme && theme.mode === 'dark') ? 'rgba(167,139,250,0.18)' : 'rgba(255,255,255,0.45)';
+      glow.addColorStop(0, warm);
+      glow.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, W, H);
+    }
+  }
+
+  function drawMesh(ctx, W, H, bg) {
+    const colors = bg.meshColors || ['#EDE6FB', '#F3E0F0', '#FBE6DD', '#E9E2FB'];
+    ctx.fillStyle = colors[0];
+    ctx.fillRect(0, 0, W, H);
+    const pos = [{ x: 0.2, y: 0.2 }, { x: 0.8, y: 0.15 }, { x: 0.75, y: 0.85 }, { x: 0.15, y: 0.8 }];
+    for (let i = 0; i < colors.length && i < 4; i++) {
+      const p = pos[i];
+      const radius = (0.4 + (bg.meshComplexity || 5) * 0.06) * Math.max(W, H);
+      const g = ctx.createRadialGradient(p.x * W, p.y * H, 0, p.x * W, p.y * H, radius);
+      g.addColorStop(0, colors[i]); g.addColorStop(0.5, colors[i] + '80'); g.addColorStop(1, colors[i] + '00');
+      ctx.globalCompositeOperation = 'screen';
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // ── Header (eyebrow / two-tone headline / accent bar / subtitle) ────────────
+  function layoutHeader(ctx, W, H, state) {
+    const sf = W / DESIGN_W;
+    const t = state.theme || {};
+    const h = state.header || {};
+    const fonts = state.fonts || {};
+    const isDark = t.mode === 'dark';
+    const baseColor = isDark ? (t.headlineBaseDark || '#FFFFFF') : (t.headlineBase || '#16161F');
+    const accentColor = t.headlineAccent || t.accent || '#7C3AED';
+    const subColor = isDark ? (t.subtitleDark || 'rgba(255,255,255,0.78)') : (t.subtitle || '#5E5E70');
+    const eyebrowColor = isDark ? (t.eyebrowDark || '#C4B5FD') : (t.eyebrow || '#8B5CF6');
+    const ruleColor = t.accent2 || '#34D399';
+
+    const blocks = [];
+    let y = (h.y != null ? h.y : 0.05) * H;
+
+    // Eyebrow
+    const eyebrow = h.eyebrow || {};
+    if (eyebrow.show !== false && eyebrow.text) {
+      const size = (eyebrow.size || 30) * sf;
+      blocks.push({ kind: 'eyebrow', text: eyebrow.text, size, color: eyebrowColor, ruleColor, y, h: size });
+      y += size + 34 * sf;
+    }
+
+    // Headline
+    const hl = h.headline || {};
+    const lines = (hl.lines || []).filter((l) => l && l.text != null);
+    if (hl.show !== false && lines.length) {
+      const weight = hl.weight || 800;
+      const lh = hl.lineHeight || 1.04;
+      const tracking = (hl.tracking != null ? hl.tracking : -1) * sf;
+      // Auto-fit: shrink the headline if the widest line would overflow.
+      let size = (hl.size || 116) * sf;
+      ctx.font = `${weight} ${size}px ${fontStack(fonts.display || 'Poppins')}`;
+      let widest = 0;
+      lines.forEach((ln) => {
+        const chars = [...String(ln.text)];
+        let lw = 0;
+        for (let i = 0; i < chars.length; i++) lw += ctx.measureText(chars[i]).width + (i < chars.length - 1 ? tracking : 0);
+        widest = Math.max(widest, lw);
+      });
+      const maxAllowed = W * 0.90;
+      if (widest > maxAllowed) size = Math.max(size * (maxAllowed / widest), 40 * sf);
+      lines.forEach((ln) => {
+        blocks.push({ kind: 'headline', text: ln.text, size, weight, tracking, lineHeight: lh, color: ln.accent ? accentColor : baseColor, font: fonts.display, y, h: size * lh });
+        y += size * lh;
+      });
+      y += 14 * sf;
+    }
+
+    // Accent bar
+    const bar = h.accentBar || {};
+    if (bar.show !== false) {
+      const bw = (bar.width || 64) * sf, bh = (bar.height || 7) * sf;
+      blocks.push({ kind: 'bar', w: bw, h: bh, color: ruleColor, y });
+      y += bh + 30 * sf;
+    }
+
+    // Subtitle
+    const sub = h.subtitle || {};
+    if (sub.show !== false && sub.text) {
+      const size = (sub.size || 46) * sf;
+      const lh = 1.32;
+      const maxW = (sub.maxWidth || 0.78) * W;
+      ctx.font = `${sub.weight || 500} ${size}px ${fontStack(fonts.body || 'DM Sans')}`;
+      const wrapped = wrapText(ctx, sub.text, maxW);
+      blocks.push({ kind: 'subtitle', lines: wrapped, size, lineHeight: lh, color: subColor, font: fonts.body, weight: sub.weight || 500, y, h: wrapped.length * size * lh });
+      y += wrapped.length * size * lh;
+    }
+
+    return { blocks, bottom: y, sf };
+  }
+
+  function drawHeader(ctx, W, H, state) {
+    const { blocks } = layoutHeader(ctx, W, H, state);
+    const cx = W / 2;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    for (const b of blocks) {
+      if (b.kind === 'eyebrow') {
+        ctx.font = `700 ${b.size}px ${fontStack((state.fonts || {}).body || 'DM Sans')}`;
+        const letterSpaced = String(b.text).toUpperCase().split('').join('  ');
+        ctx.fillStyle = b.color;
+        const textW = ctx.measureText(letterSpaced).width;
+        ctx.fillText(letterSpaced, cx, b.y);
+        // Flanking rules
+        const ruleLen = b.size * 1.1;
+        const gap = b.size * 0.7;
+        const midY = b.y + b.size / 2;
+        ctx.strokeStyle = b.ruleColor;
+        ctx.lineWidth = Math.max(2, b.size * 0.09);
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(cx - textW / 2 - gap, midY);
+        ctx.lineTo(cx - textW / 2 - gap - ruleLen, midY);
+        ctx.moveTo(cx + textW / 2 + gap, midY);
+        ctx.lineTo(cx + textW / 2 + gap + ruleLen, midY);
+        ctx.stroke();
+      } else if (b.kind === 'headline') {
+        drawTrackedLine(ctx, b.text, cx, b.y, b.size, b.weight, b.font, b.color, b.tracking);
+      } else if (b.kind === 'bar') {
+        ctx.fillStyle = b.color;
+        roundRect(ctx, cx - b.w / 2, b.y, b.w, b.h, b.h / 2);
+        ctx.fill();
+      } else if (b.kind === 'subtitle') {
+        ctx.font = `${b.weight} ${b.size}px ${fontStack(b.font || 'DM Sans')}`;
+        ctx.fillStyle = b.color;
+        let yy = b.y;
+        for (const line of b.lines) { ctx.fillText(line, cx, yy); yy += b.size * b.lineHeight; }
+      }
+    }
+    ctx.restore();
+  }
+
+  // Centered line with letter-spacing (so headlines can track tight)
+  function drawTrackedLine(ctx, text, cx, y, size, weight, font, color, tracking) {
+    ctx.save();
+    ctx.font = `${weight} ${size}px ${fontStack(font || 'Poppins')}`;
+    ctx.fillStyle = color;
+    ctx.textBaseline = 'top';
+    if (!tracking) { ctx.textAlign = 'center'; ctx.fillText(text, cx, y); ctx.restore(); return; }
+    ctx.textAlign = 'left';
+    const chars = [...String(text)];
+    let total = 0;
+    for (let i = 0; i < chars.length; i++) total += ctx.measureText(chars[i]).width + (i < chars.length - 1 ? tracking : 0);
+    let x = cx - total / 2;
+    for (let i = 0; i < chars.length; i++) { ctx.fillText(chars[i], x, y); x += ctx.measureText(chars[i]).width + tracking; }
+    ctx.restore();
+  }
+
+  // ── Phone mockup ─────────────────────────────────────────────────────────────
+  function drawPhoneMockup(ctx, cx, cy, w, h, screenshot, opts = {}) {
+    const { rotation = 0, shadow = true, shadowIntensity = 0.35, shadowBlur = 60, screenBrightness = 0, frameType = 'iphone' } = opts;
     const frameCfg = FRAMES[frameType] || FRAMES.iphone;
-    const currentFrameImage = frameImages[frameType];
-    if (!currentFrameImage) return; // nothing to draw until the frame loads
-    const resolvedFrameCfg = getResolvedScreenConfig(frameType, frameCfg, currentFrameImage);
+    const frameImage = frameImages[frameType];
+    if (!frameImage) return;
+    const cfg = getResolvedScreenConfig(frameType, frameCfg, frameImage);
 
     ctx.save();
+    if (rotation !== 0) { ctx.translate(cx, cy); ctx.rotate(rotation * Math.PI / 180); ctx.translate(-cx, -cy); }
 
-    // Apply rotation around center
-    if (rotation !== 0) {
-      ctx.translate(cx, cy);
-      ctx.rotate(rotation * Math.PI / 180);
-      ctx.translate(-cx, -cy);
-    }
-
-    // Apply perspective transform
-    if (perspective) {
-      applyPerspectiveTransform(ctx, cx, cy, w, h, perspective);
-    }
-
-    // Build the phone composite on an offscreen canvas so the frame PNG
-    // is used exactly as-is — its transparent pixels (screen area, button
-    // gaps, outer corners) stay transparent.
-    // Use frame's native resolution for maximum screenshot quality,
-    // then scale down when compositing onto the main canvas.
-    const pw = currentFrameImage.naturalWidth || Math.round(w);
-    const ph = currentFrameImage.naturalHeight || Math.round(h);
+    const pw = frameImage.naturalWidth || Math.round(w);
+    const ph = frameImage.naturalHeight || Math.round(h);
     const off = document.createElement('canvas');
-    off.width = pw;
-    off.height = ph;
+    off.width = pw; off.height = ph;
     const octx = off.getContext('2d');
-    octx.imageSmoothingEnabled = true;
-    octx.imageSmoothingQuality = 'high';
+    octx.imageSmoothingEnabled = true; octx.imageSmoothingQuality = 'high';
 
-    // Screen area (relative to the offscreen canvas at 0,0)
-    const sx = pw * resolvedFrameCfg.screenLeft;
-    const sy = ph * resolvedFrameCfg.screenTop;
-    const sw = pw * (1 - resolvedFrameCfg.screenLeft - resolvedFrameCfg.screenRight);
-    const sh = ph * (1 - resolvedFrameCfg.screenTop - resolvedFrameCfg.screenBottom);
-    const screenR = pw * resolvedFrameCfg.screenCornerRadius;
+    const sx = pw * cfg.screenLeft, sy = ph * cfg.screenTop;
+    const sw = pw * (1 - cfg.screenLeft - cfg.screenRight);
+    const sh = ph * (1 - cfg.screenTop - cfg.screenBottom);
+    const screenR = pw * cfg.screenCornerRadius;
+    const mask = screenMaskByFrameImage.get(frameImage) || null;
 
-    // 1. Draw screenshot content
     if (screenshot) {
-      const imgW = screenshot.naturalWidth || screenshot.width;
-      const imgH = screenshot.naturalHeight || screenshot.height;
-      const imgRatio = imgW / imgH;
-      const screenRatio = sw / sh;
-
-      let drawW, drawH, drawX, drawY;
-      // Fill width always; if image is taller than screen crop from top (preserve bottom)
-      if (imgRatio > screenRatio) {
-        // Image is wider than screen → fit height, centre horizontally (no vertical crop)
-        drawH = sh;
-        drawW = sh * imgRatio;
-        drawX = sx + (sw - drawW) / 2;
-        drawY = sy;
-      } else {
-        // Image is portrait (taller) → fill width, anchor bottom (crop top if needed)
-        drawW = sw;
-        drawH = sw / imgRatio;
-        drawX = sx;
-        drawY = sy + sh - drawH; // bottom-aligned: top crops if drawH > sh
-      }
-
+      const iw = screenshot.naturalWidth || screenshot.width;
+      const ih = screenshot.naturalHeight || screenshot.height;
+      const iRatio = iw / ih, sRatio = sw / sh;
+      let dW, dH, dX, dY;
+      if (iRatio > sRatio) { dH = sh; dW = sh * iRatio; dX = sx + (sw - dW) / 2; dY = sy; }
+      else { dW = sw; dH = sw / iRatio; dX = sx; dY = sy + sh - dH; }
       octx.save();
-      roundedRectPath(octx, sx, sy, sw, sh, screenR);
-      octx.clip();
-      octx.fillStyle = '#000000';
-      octx.fillRect(sx, sy, sw, sh);
-      octx.drawImage(screenshot, drawX, drawY, drawW, drawH);
-
+      if (!mask) { roundRect(octx, sx, sy, sw, sh, screenR); octx.clip(); }
+      octx.fillStyle = '#000'; octx.fillRect(sx, sy, sw, sh);
+      octx.drawImage(screenshot, dX, dY, dW, dH);
       if (screenBrightness !== 0) {
-        if (screenBrightness > 0) {
-          octx.fillStyle = `rgba(255,255,255,${screenBrightness / 100})`;
-        } else {
-          octx.fillStyle = `rgba(0,0,0,${Math.abs(screenBrightness) / 100})`;
-        }
+        octx.fillStyle = screenBrightness > 0 ? `rgba(255,255,255,${screenBrightness / 100})` : `rgba(0,0,0,${Math.abs(screenBrightness) / 100})`;
         octx.fillRect(sx, sy, sw, sh);
       }
+      if (mask) { octx.globalCompositeOperation = 'destination-in'; octx.drawImage(mask, 0, 0, pw, ph); octx.globalCompositeOperation = 'source-over'; }
       octx.restore();
     } else {
-      // Placeholder
       const grad = octx.createLinearGradient(sx, sy, sx, sy + sh);
-      grad.addColorStop(0, '#e8e0f0');
-      grad.addColorStop(1, '#d4c8e8');
+      grad.addColorStop(0, '#efeafb'); grad.addColorStop(1, '#e3d9f3');
+      octx.save();
       octx.fillStyle = grad;
-      roundedRectPath(octx, sx, sy, sw, sh, screenR);
-      octx.fill();
+      if (!mask) { roundRect(octx, sx, sy, sw, sh, screenR); octx.fill(); }
+      else { octx.fillRect(sx, sy, sw, sh); octx.globalCompositeOperation = 'destination-in'; octx.drawImage(mask, 0, 0, pw, ph); octx.globalCompositeOperation = 'source-over'; }
+      octx.restore();
     }
 
-    // 2. Draw frame image on top — this masks bezels, buttons, Dynamic
-    //    Island, corners. Transparent gaps between buttons stay transparent.
-    octx.drawImage(currentFrameImage, 0, 0, pw, ph);
+    octx.drawImage(frameImage, 0, 0, pw, ph);
 
-    // 3. Stamp the composite onto the main canvas (with optional shadow)
-    const x = cx - w / 2;
-    const y = cy - h / 2;
-
+    const x = cx - w / 2, y = cy - h / 2;
     if (shadow) {
-      ctx.shadowColor = `rgba(0, 0, 0, ${shadowIntensity})`;
+      ctx.shadowColor = `rgba(24, 16, 48, ${shadowIntensity})`;
       ctx.shadowBlur = shadowBlur;
       ctx.shadowOffsetX = 0;
       ctx.shadowOffsetY = shadowBlur * 0.4;
     }
-
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(off, x, y, w, h);
-
-    ctx.restore(); // restore rotation/perspective
-  }
-
-  /**
-   * Draw logo/image overlay
-   */
-  function drawLogoOverlay(ctx, W, H, state) {
-    const img = state.logo;
-    const scale = (state.logoScale || 15) / 100;
-    const opacity = (state.logoOpacity ?? 100) / 100;
-    const imgW = img.naturalWidth || img.width;
-    const imgH = img.naturalHeight || img.height;
-    const ratio = imgW / imgH;
-
-    const drawW = W * scale;
-    const drawH = drawW / ratio;
-    const x = W * (state.logoX / 100) - drawW / 2;
-    const y = H * (state.logoY / 100) - drawH / 2;
-
-    ctx.save();
-    ctx.globalAlpha = opacity;
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(img, x, y, drawW, drawH);
     ctx.restore();
   }
 
-  /**
-   * Draw a text layer with word wrapping
-   */
-  function drawTextLayer(ctx, canvasW, canvasH, text) {
-    if (!text.content || text.content.trim() === '') return;
+  // ── Floating pills ───────────────────────────────────────────────────────────
+  const PILL_FONT_BODY = 'DM Sans';
+  // Explicit colour-emoji stack so every emoji renders on canvas (some emoji
+  // fall back to a blank glyph when only a text font is set).
+  const EMOJI_FONT = '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji","Twemoji Mozilla","EmojiOne Color",sans-serif';
 
-    const fontSize = text.size || 72;
-    const fontWeight = text.weight || 700;
-    const fontFamily = text.font || 'Inter';
-    const color = text.color || '#ffffff';
-    const align = text.align || 'center';
-    const lineHeight = text.lineHeight || 1.15;
-    const maxWidth = (text.maxWidth / 100) * canvasW || canvasW * 0.85;
-    const letterSpacing = text.letterSpacing || 0;
+  function pillMetrics(ctx, pill, W, fonts) {
+    const sf = (W / DESIGN_W) * (pill.scale || 1);
+    const isRating = pill.kind === 'rating';
+    const bodyFont = fontStack((fonts && fonts.body) || PILL_FONT_BODY);
 
-    // Position (percentage of canvas)
-    const posX = (text.x / 100) * canvasW;
-    const posY = (text.y / 100) * canvasH;
+    if (isRating) {
+      const starSize = 30 * sf;
+      const labelSize = 28 * sf;
+      const padX = 26 * sf, padY = 18 * sf, gap = 14 * sf;
+      const stars = Math.max(1, Math.min(5, pill.stars || 5));
+      const starStr = '★'.repeat(stars);
+      ctx.font = `700 ${starSize}px ${bodyFont}`;
+      const starW = ctx.measureText(starStr).width;
+      ctx.font = `700 ${labelSize}px ${bodyFont}`;
+      const labelW = ctx.measureText(pill.label || '').width;
+      const w = padX * 2 + starW + (pill.label ? gap + labelW : 0);
+      const h = padY * 2 + Math.max(starSize, labelSize);
+      return { sf, w, h, padX, padY, gap, starSize, labelSize, starStr, starW, labelW, isRating: true, r: h / 2 };
+    }
+
+    const titleSize = 30 * sf;
+    const subSize = 22 * sf;
+    const emojiSize = 38 * sf;
+    const padX = 26 * sf, padY = 19 * sf, gap = 15 * sf;
+    ctx.font = `700 ${titleSize}px ${bodyFont}`;
+    const titleW = ctx.measureText(pill.title || '').width;
+    let subW = 0;
+    if (pill.subtitle) { ctx.font = `500 ${subSize}px ${bodyFont}`; subW = ctx.measureText(pill.subtitle).width; }
+    const textW = Math.max(titleW, subW);
+    const emojiW = pill.emoji ? emojiSize + gap : 0;
+    const textH = pill.subtitle ? titleSize + subSize * 1.18 + 3 * sf : titleSize;
+    const w = padX * 2 + emojiW + textW;
+    const h = padY * 2 + Math.max(textH, emojiW ? emojiSize : 0);
+    return { sf, w, h, padX, padY, gap, titleSize, subSize, emojiSize, emojiW, textW, textH, r: Math.min(h / 2, 36 * sf), isRating: false };
+  }
+
+  function drawPill(ctx, pill, W, H, fonts, opts = {}) {
+    const m = pillMetrics(ctx, pill, W, fonts);
+    const cx = (pill.x != null ? pill.x : 0.5) * W;
+    const cy = (pill.y != null ? pill.y : 0.5) * H;
+    const style = pill.style || 'solid';
+    const bodyFont = fontStack((fonts && fonts.body) || PILL_FONT_BODY);
+
+    const isGlass = style === 'glass';
+    const cardFill = isGlass ? 'rgba(255,255,255,0.66)' : '#FFFFFF';
+    const titleColor = '#1A1A24';
+    const subColor = isGlass ? 'rgba(38,34,58,0.72)' : '#8A8A99';
 
     ctx.save();
+    ctx.translate(cx, cy);
+    if (pill.rotation) ctx.rotate(pill.rotation * Math.PI / 180);
 
-    ctx.font = `${fontWeight} ${fontSize}px "${fontFamily}", "SF Pro Display", -apple-system, system-ui, sans-serif`;
-    ctx.fillStyle = color;
-    ctx.textAlign = align;
-    ctx.textBaseline = 'top';
-
-    // Text shadow
-    if (text.shadow) {
-      ctx.shadowColor = text.shadowColor || 'rgba(0,0,0,0.3)';
-      ctx.shadowBlur = text.shadowBlur || 10;
-      ctx.shadowOffsetX = text.shadowOffsetX || 0;
-      ctx.shadowOffsetY = text.shadowOffsetY || 4;
-    }
-
-    // Handle letter spacing via manual character placement
-    // For simplicity, if letter spacing is 0, use standard drawText
-    // Split text by explicit newlines first
-    const paragraphs = text.content.split('\n');
-    let currentY = posY;
-
-    for (const paragraph of paragraphs) {
-      const lines = wrapText(ctx, paragraph, maxWidth);
-      for (const line of lines) {
-        if (letterSpacing !== 0) {
-          drawTextWithSpacing(ctx, line, posX, currentY, letterSpacing, align, maxWidth);
-        } else {
-          ctx.fillText(line, posX, currentY);
-        }
-        currentY += fontSize * lineHeight;
-      }
-    }
-
+    // Card + shadow
+    ctx.save();
+    ctx.shadowColor = `rgba(24,16,48,${isGlass ? 0.14 : 0.16})`;
+    ctx.shadowBlur = 34 * m.sf;
+    ctx.shadowOffsetY = 12 * m.sf;
+    roundRect(ctx, -m.w / 2, -m.h / 2, m.w, m.h, m.r);
+    ctx.fillStyle = cardFill;
+    ctx.fill();
     ctx.restore();
-  }
-
-  /**
-   * Word-wrap text to fit within maxWidth
-   */
-  function wrapText(ctx, text, maxWidth) {
-    if (!text) return [''];
-    const words = text.split(' ');
-    const lines = [];
-    let currentLine = '';
-
-    for (const word of words) {
-      const testLine = currentLine ? currentLine + ' ' + word : word;
-      const metrics = ctx.measureText(testLine);
-      if (metrics.width > maxWidth && currentLine) {
-        lines.push(currentLine);
-        currentLine = word;
-      } else {
-        currentLine = testLine;
-      }
+    if (isGlass) {
+      roundRect(ctx, -m.w / 2, -m.h / 2, m.w, m.h, m.r);
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 1.4 * m.sf;
+      ctx.stroke();
     }
-    if (currentLine) lines.push(currentLine);
-    if (lines.length === 0) lines.push('');
-    return lines;
-  }
-
-  /**
-   * Draw text with custom letter spacing
-   */
-  function drawTextWithSpacing(ctx, text, x, y, spacing, align, maxWidth) {
-    // Calculate total width with spacing
-    let totalWidth = 0;
-    for (let i = 0; i < text.length; i++) {
-      totalWidth += ctx.measureText(text[i]).width + (i < text.length - 1 ? spacing : 0);
+    if (opts.selected) {
+      roundRect(ctx, -m.w / 2 - 4 * m.sf, -m.h / 2 - 4 * m.sf, m.w + 8 * m.sf, m.h + 8 * m.sf, m.r + 4 * m.sf);
+      ctx.strokeStyle = (opts.accent || '#7C3AED');
+      ctx.lineWidth = 3 * m.sf;
+      ctx.setLineDash([8 * m.sf, 6 * m.sf]);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
 
-    let startX;
-    if (align === 'center') startX = x - totalWidth / 2;
-    else if (align === 'right') startX = x - totalWidth;
-    else startX = x;
+    ctx.textBaseline = 'middle';
 
-    let currentX = startX;
-    const savedAlign = ctx.textAlign;
-    ctx.textAlign = 'left';
-
-    for (let i = 0; i < text.length; i++) {
-      ctx.fillText(text[i], currentX, y);
-      currentX += ctx.measureText(text[i]).width + spacing;
-    }
-
-    ctx.textAlign = savedAlign;
-  }
-
-  /**
-   * Draw a layout thumbnail (small preview of phone position)
-   */
-  function drawLayoutThumbnail(canvas, layout) {
-    const ctx = canvas.getContext('2d');
-    const W = canvas.width;
-    const H = canvas.height;
-
-    // Background
-    const grad = ctx.createLinearGradient(0, 0, 0, H);
-    grad.addColorStop(0, '#4a6cf7');
-    grad.addColorStop(0.5, '#8b5cf6');
-    grad.addColorStop(1, '#d946a8');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, W, H);
-
-    // Text placeholder
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    const textArea = layout.textArea;
-    const textY = H * (textArea.y + 0.02);
-    const textH = 3;
-    const textW1 = W * 0.7;
-    const textW2 = W * 0.5;
-    roundedRectPath(ctx, (W - textW1) / 2, textY, textW1, textH, 1.5);
-    ctx.fill();
-    roundedRectPath(ctx, (W - textW2) / 2, textY + textH + 3, textW2, textH, 1.5);
-    ctx.fill();
-
-    // Phone(s)
-    for (const phone of layout.phones) {
-      const pw = W * phone.width * 0.65; // Scale down for thumbnail
-      const ph = pw / PHONE_W_TO_H;
-      const px = W * phone.x;
-      const py = H * phone.y;
-
-      ctx.save();
-      if (phone.rotation) {
-        ctx.translate(px, py);
-        ctx.rotate(phone.rotation * Math.PI / 180);
-        ctx.translate(-px, -py);
+    if (m.isRating) {
+      let x = -m.w / 2 + m.padX;
+      ctx.textAlign = 'left';
+      ctx.font = `700 ${m.starSize}px ${bodyFont}`;
+      ctx.fillStyle = '#F5B301';
+      ctx.fillText(m.starStr, x, 1 * m.sf);
+      x += m.starW + (pill.label ? m.gap : 0);
+      if (pill.label) {
+        ctx.font = `700 ${m.labelSize}px ${bodyFont}`;
+        ctx.fillStyle = titleColor;
+        ctx.fillText(pill.label, x, 0);
       }
-      if (phone.perspective) {
-        applyPerspectiveTransform(ctx, px, py, pw, ph, phone.perspective);
-      }
-
-      const phoneX = px - pw / 2;
-      const phoneY = py - ph / 2;
-      const cr = pw * 0.17;
-
-      // Phone body
-      roundedRectPath(ctx, phoneX, phoneY, pw, ph, cr);
-      ctx.fillStyle = '#1a1a1a';
-      ctx.fill();
-
-      // Screen
-      const bezel = pw * 0.03;
-      roundedRectPath(ctx, phoneX + bezel, phoneY + bezel, pw - bezel * 2, ph - bezel * 2, cr - bezel);
-      ctx.fillStyle = 'rgba(255,255,255,0.15)';
-      ctx.fill();
-
       ctx.restore();
+      return;
+    }
+
+    let x = -m.w / 2 + m.padX;
+    if (pill.emoji) {
+      if (style === 'tint') {
+        const chip = m.emojiSize + 14 * m.sf;
+        roundRect(ctx, x - 7 * m.sf, -chip / 2, chip, chip, chip * 0.32);
+        ctx.fillStyle = hexA(pill.accent || (opts.accent || '#7C3AED'), 0.14);
+        ctx.fill();
+      }
+      ctx.font = `${m.emojiSize}px ${EMOJI_FONT}`;
+      ctx.textAlign = 'left';
+      ctx.fillText(pill.emoji, x, 1 * m.sf);
+      x += m.emojiSize + m.gap;
+    }
+
+    ctx.textAlign = 'left';
+    if (pill.subtitle) {
+      const blockH = m.titleSize + m.subSize * 1.18;
+      const titleY = -blockH / 2 + m.titleSize / 2;
+      const subY = titleY + m.titleSize / 2 + m.subSize * 0.72;
+      ctx.font = `700 ${m.titleSize}px ${bodyFont}`;
+      ctx.fillStyle = titleColor;
+      ctx.fillText(pill.title || '', x, titleY);
+      ctx.font = `500 ${m.subSize}px ${bodyFont}`;
+      ctx.fillStyle = subColor;
+      ctx.fillText(pill.subtitle, x, subY);
+    } else {
+      ctx.font = `700 ${m.titleSize}px ${bodyFont}`;
+      ctx.fillStyle = titleColor;
+      ctx.fillText(pill.title || '', x, 0);
+    }
+    ctx.restore();
+  }
+
+  function hexA(hex, a) {
+    const h = String(hex).replace('#', '');
+    const n = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+    const r = parseInt(n.slice(0, 2), 16), g = parseInt(n.slice(2, 4), 16), b = parseInt(n.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${a})`;
+  }
+
+  // Pixel-space rects for hit testing (used by the drag editor)
+  function getPillRects(canvasW, canvasH, state) {
+    const meas = document.createElement('canvas').getContext('2d');
+    const fonts = state.fonts || {};
+    return (state.pills || []).map((pill) => {
+      const m = pillMetrics(meas, pill, canvasW, fonts);
+      return { id: pill.id, cx: (pill.x != null ? pill.x : 0.5) * canvasW, cy: (pill.y != null ? pill.y : 0.5) * canvasH, w: m.w, h: m.h, rotation: pill.rotation || 0 };
+    });
+  }
+
+  function hitTestPill(px, py, rect) {
+    const dx = px - rect.cx, dy = py - rect.cy;
+    const a = -(rect.rotation || 0) * Math.PI / 180;
+    const lx = dx * Math.cos(a) - dy * Math.sin(a);
+    const ly = dx * Math.sin(a) + dy * Math.cos(a);
+    return Math.abs(lx) <= rect.w / 2 && Math.abs(ly) <= rect.h / 2;
+  }
+
+  // Horizontal edges of a phone as canvas fractions (for bleed detection)
+  function phoneEdges(p) {
+    if (!p) return null;
+    const scale = p.scale != null ? p.scale : 55;
+    const x = (p.x != null ? p.x : 50) / 100;
+    return { left: x - scale / 200, right: x + scale / 200 };
+  }
+
+  function paintPhone(ctx, W, H, p, frameType, xPercent) {
+    if (!p || p.show === false) return;
+    const pw = W * ((p.scale != null ? p.scale : 55) / 100);
+    const ph = pw / getPhoneAspectRatio(frameType);
+    drawPhoneMockup(ctx, W * (xPercent / 100), H * ((p.y != null ? p.y : 62) / 100), pw, ph, p.screenshot, {
+      rotation: p.rotation || 0,
+      shadow: p.shadow !== false,
+      shadowIntensity: (p.shadowIntensity != null ? p.shadowIntensity : 40) / 100,
+      shadowBlur: p.shadowBlur != null ? p.shadowBlur : 60,
+      screenBrightness: p.screenBrightness || 0,
+      frameType,
+    });
+  }
+
+  // All phones (a screen can have several) as continuation-aware draw entries.
+  function collectPhones(state, opts) {
+    const frameType = state.device || 'iphone';
+    const out = [];
+    for (const p of (state.phones || [])) {
+      if (p.show === false) continue;
+      out.push({ phone: p, frameType, x: p.x != null ? p.x : 50, z: p.z || 0, order: 1 });
+    }
+    const prev = opts.prev, next = opts.next;
+    if (prev && prev.phones) {
+      const pt = prev.device || 'iphone';
+      for (const p of prev.phones) {
+        if (p.show === false) continue;
+        const e = phoneEdges(p);
+        if (e && e.right > 1.0) out.push({ phone: p, frameType: pt, x: (p.x != null ? p.x : 50) - 100, z: p.z || 0, order: 0 });
+      }
+    }
+    if (next && next.phones) {
+      const nt = next.device || 'iphone';
+      for (const p of next.phones) {
+        if (p.show === false) continue;
+        const e = phoneEdges(p);
+        if (e && e.left < 0.0) out.push({ phone: p, frameType: nt, x: (p.x != null ? p.x : 50) + 100, z: p.z || 0, order: 2 });
+      }
+    }
+    out.sort((a, b) => (a.z - b.z) || (a.order - b.order)); // lower layer first → higher on top
+    return out;
+  }
+
+  // ── Main render ──────────────────────────────────────────────────────────────
+  function render(canvas, state, opts = {}) {
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    drawBackground(ctx, W, H, state.background, state.theme);
+
+    if (state.header && state.header.show !== false) drawHeader(ctx, W, H, state);
+
+    // Every phone that lands on this canvas — this screen's own phone(s) plus
+    // continuations of neighbours whose phone bleeds across the seam — drawn
+    // ordered by layer (phone.z) so the user controls overlap.
+    for (const d of collectPhones(state, opts)) paintPhone(ctx, W, H, d.phone, d.frameType, d.x);
+
+    const fonts = state.fonts || {};
+    const selectedId = opts.selectedPillId;
+    const accent = (state.theme && state.theme.accent) || '#7C3AED';
+    for (const pill of (state.pills || [])) {
+      drawPill(ctx, pill, W, H, fonts, { selected: pill.id === selectedId, accent });
     }
   }
 
-  // Public API
   return {
-    render,
-    drawLayoutThumbnail,
-    drawBackground,
-    drawPhoneMockup,
-    getPhoneAspectRatio,
-    PHONE_W_TO_H,
+    render, drawBackground, drawPhoneMockup, drawPill,
+    getPhoneAspectRatio, getPillRects, hitTestPill, layoutHeader,
+    setAssetLoadCallback(fn) { onAssetLoad = fn; },
+    FRAMES,
   };
-
 })();

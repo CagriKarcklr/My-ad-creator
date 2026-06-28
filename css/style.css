@@ -185,6 +185,16 @@ body {
   font-family: inherit;
 }
 .btn-secondary:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-active); }
+.btn-secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  border-color: var(--border);
+}
+.btn-secondary:disabled:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
 
 .btn-accent {
   display: flex;
@@ -819,6 +829,30 @@ textarea:focus { border-color: var(--accent); }
 .text-preset-toolbar select {
   flex: 1;
   min-width: 0;
+}
+
+.screenshot-adjust-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.shot-adjust-preset-toolbar {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+}
+
+.shot-adjust-preset-toolbar select {
+  min-width: 0;
+}
+
+.shot-target-btn.active {
+  background: rgba(99,102,241,0.2);
+  color: var(--text-primary);
+  border-color: var(--border-active);
 }
 
 .bulk-toolbar {
@@ -1966,6 +2000,10 @@ textarea.text-layer-content { margin-bottom: 8px; }
   :root { --sidebar-width: 320px; }
 
   .bg-preset-toolbar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .shot-adjust-preset-toolbar {
     grid-template-columns: 1fr 1fr;
   }
 }

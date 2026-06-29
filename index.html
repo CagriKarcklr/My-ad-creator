@@ -38,10 +38,17 @@
           <button class="seg-btn" data-device="android">Android</button>
         </div>
         <span class="res-label" id="res-label">1284 × 2778</span>
+        <div class="hist-group">
+          <button class="btn ghost icon" id="btn-undo" title="Undo (⌘Z)" disabled>↶</button>
+          <button class="btn ghost icon" id="btn-redo" title="Redo (⌘⇧Z)" disabled>↷</button>
+        </div>
       </div>
       <div class="topbar-right">
+        <button class="btn ghost" id="btn-all-screens" title="Show all screens side-by-side while editing">▦ All screens</button>
+        <button class="btn ghost" id="btn-theme" title="Toggle light / dark interface">☀️</button>
         <button class="btn ghost" id="btn-add-screen" title="Add screen">+ Screen</button>
         <button class="btn ghost" id="btn-duplicate-screen" title="Duplicate current screen">Duplicate</button>
+        <button class="btn ghost" id="btn-drafts" title="Saved drafts">Drafts</button>
         <button class="btn" id="btn-export">Export PNG</button>
         <button class="btn primary" id="btn-export-all">Export all (ZIP)</button>
       </div>
@@ -50,12 +57,15 @@
     <main class="workspace">
       <!-- Stage -->
       <section class="stage">
+        <div class="draft-banner hidden" id="draft-banner">
+          <span>Unsaved work from your last session was found.</span>
+          <button class="btn primary sm" id="draft-resume">Restore</button>
+          <button class="btn ghost sm" id="draft-discard">Dismiss</button>
+        </div>
         <div class="screen-tabs" id="screen-tabs"></div>
         <div class="canvas-host" id="canvas-host">
           <div class="filmstrip" id="filmstrip">
-            <canvas id="canvas-prev" class="neighbor" style="display:none"></canvas>
             <canvas id="canvas" width="1284" height="2778"></canvas>
-            <canvas id="canvas-next" class="neighbor" style="display:none"></canvas>
           </div>
         </div>
         <div class="stage-foot">
@@ -89,6 +99,16 @@
             <label class="field-label">App / screen brief <span class="muted">(optional)</span></label>
             <textarea id="ai-brief" class="input" rows="3" placeholder="e.g. Home screen showing today's safe-to-spend number and the streak."></textarea>
 
+            <label class="field-label">Phone layout</label>
+            <select id="ai-layout" class="input">
+              <option value="auto">Auto — let Kimi choose</option>
+              <option value="centered">Single phone · centred</option>
+              <option value="bleed">Single phone · bleed off</option>
+              <option value="multiple">Two phones</option>
+              <option value="multiBleed">Two phones · bleed off</option>
+            </select>
+            <button class="btn ai-btn" id="ai-auto" style="width:100%;margin-top:10px">🎨 Auto-design this screen<small>reads your screenshot → identifies the feature, writes copy, places pills, lays out the phone(s)</small></button>
+
             <div class="ai-actions">
               <button class="btn ai-btn" id="ai-copy">✨ Generate copy<small>eyebrow · headline · subtitle</small></button>
               <button class="btn ai-btn" id="ai-pills">✨ Generate pills<small>floating feature badges</small></button>
@@ -120,6 +140,17 @@
               <label class="switch"><input type="checkbox" id="header-show" checked><span></span></label>
             </div>
 
+            <label class="field-label">Text-set library <span class="muted" id="textset-count"></span></label>
+            <div class="textset-bar">
+              <select id="textset-select" class="input" aria-label="Text sets"></select>
+              <button class="btn ghost sm" id="textset-apply">Apply</button>
+            </div>
+            <div class="row" style="margin-top:6px">
+              <button class="btn ghost sm grow" id="textset-shuffle">🎲 Surprise me</button>
+              <button class="btn ghost sm grow" id="textset-save">＋ Save current</button>
+            </div>
+            <hr class="div">
+
             <label class="field-label">Eyebrow</label>
             <div class="row">
               <input type="text" id="eyebrow-text" class="input" placeholder="TODAY">
@@ -144,16 +175,27 @@
               </label>
             </div>
 
-            <label class="row between" style="margin-top:6px">
-              <span class="field-label" style="margin:0">Accent bar</span>
-              <label class="switch sm"><input type="checkbox" id="bar-show" checked><span></span></label>
-            </label>
+            <label class="field-label">Accent mark</label>
+            <div class="row">
+              <select id="accent-mode" class="input">
+                <option value="bar">Centred bar (divider)</option>
+                <option value="underline">Underline a word</option>
+                <option value="none">None</option>
+              </select>
+              <select id="accent-word" class="input" style="display:none" aria-label="Word to underline"></select>
+            </div>
 
             <label class="field-label">Subtitle</label>
             <textarea id="subtitle-text" class="input" rows="2" placeholder="One calm number every morning."></textarea>
 
-            <label class="field-label">Header position</label>
-            <input type="range" id="header-y" min="2" max="20" value="5">
+            <label class="field-label">Vertical position</label>
+            <input type="range" id="header-y" min="0" max="92" value="5">
+            <p class="muted tiny">Drag the text on the canvas to place it anywhere.</p>
+
+            <label class="row between" style="margin-top:8px">
+              <span class="field-label" style="margin:0">Text can bleed off edges</span>
+              <label class="switch sm"><input type="checkbox" id="header-bleed"><span></span></label>
+            </label>
 
             <label class="row between" style="margin-top:10px">
               <span class="field-label" style="margin:0">Dark theme (light text)</span>
@@ -171,6 +213,7 @@
               <button class="btn ghost sm" id="btn-add-pill">+ Add pill</button>
               <button class="btn ghost sm" id="btn-add-rating">+ Rating</button>
               <button class="btn ghost sm" id="btn-arrange-pills">Auto-arrange</button>
+              <button class="btn ghost sm" id="btn-same-size" title="Make all pills the same size">Same size</button>
             </div>
             <button class="btn ai-btn full" id="pills-ai">✨ Generate pills with Kimi</button>
             <div id="pill-list" class="pill-list"></div>
@@ -215,6 +258,25 @@
               <span class="field-label" style="margin:0">Top glow</span>
               <label class="switch sm"><input type="checkbox" id="bg-glow" checked><span></span></label>
             </label>
+
+            <hr class="div">
+            <div class="row between">
+              <h4 style="margin:0">Panorama background</h4>
+              <label class="switch sm"><input type="checkbox" id="pano-enable"><span></span></label>
+            </div>
+            <p class="muted tiny">One gradient flowing across all screens — each screen shows its slice. Overrides the per-screen background above.</p>
+            <div id="pano-controls" class="hidden">
+              <label class="field-label">Panorama library <span class="muted" id="pano-count"></span></label>
+              <div class="pano-presets" id="pano-presets"></div>
+              <label class="field-label">Full preview (all screens)</label>
+              <div id="pano-preview" class="pano-preview"></div>
+              <label class="field-label">Colours · left → right flow</label>
+              <div id="pano-stops" class="grad-stops"></div>
+              <div class="row" style="margin-top:8px">
+                <button class="btn ghost sm grow" id="pano-add">+ Colour</button>
+                <button class="btn ghost sm grow" id="pano-save">＋ Save to library</button>
+              </div>
+            </div>
           </section>
 
           <!-- ===== DEVICE ===== -->
@@ -233,10 +295,10 @@
               <button class="btn ghost sm" data-bleed="right" title="Phone bleeds off the right edge">Bleed right ◨</button>
             </div>
             <label class="row between" style="margin-top:12px">
-              <span class="field-label" style="margin:0">Show neighbour screens</span>
+              <span class="field-label" style="margin:0">Show all screens side-by-side</span>
               <label class="switch sm"><input type="checkbox" id="show-neighbors"><span></span></label>
             </label>
-            <p class="muted tiny">Preview the previous / next screen on each side, so a phone can bleed across into the next image.</p>
+            <p class="muted tiny">See every screen together while you edit (also the ▦ All screens button up top), so bleeds and the panorama connect across the set. Click any screen to edit it.</p>
             <button class="btn ghost sm full" id="match-prev-bg" style="margin-top:8px">Match background ← previous screen</button>
 
             <hr class="div">
@@ -306,10 +368,25 @@
     </main>
   </div>
 
+  <!-- Drafts menu -->
+  <div id="drafts-overlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-head"><h3>Drafts</h3><button id="drafts-close" class="modal-x">×</button></div>
+      <div class="modal-body">
+        <button class="btn primary" id="btn-save-draft" style="width:100%">＋ Save current as a new draft</button>
+        <div id="drafts-list" class="drafts-list"></div>
+        <hr class="div">
+        <button class="btn ghost" id="btn-reset" style="width:100%" title="Discard current work, back to starter screens">Reset to starter screens</button>
+      </div>
+    </div>
+  </div>
+
   <!-- toast -->
   <div id="toast" class="toast hidden"></div>
 
   <script src="brands/spendaily.js"></script>
+  <script src="brands/spendaily-content.js"></script>
+  <script src="js/emoji-data.js"></script>
   <script src="js/renderer.js"></script>
   <script src="js/kimi.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>

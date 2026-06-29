@@ -104,7 +104,7 @@ window.Kimi = (() => {
     const user = [
       `Screen: ${screenNote || 'app home screen'}.`,
       headline ? `Headline on this screen: "${headline}".` : '',
-      image ? 'A screenshot of the actual app screen is attached — base the pills on what is genuinely visible in it (real numbers, labels, features on screen). Do not invent UI that is not shown.' : '',
+      image ? 'A screenshot of the app screen is attached. FIRST identify which Spendaily feature/section it shows (e.g. daily number, rollover, goals, calendar, privacy, logging). Then write pills that SELL THAT FEATURE\'S BENEFITS using the brand blueprint — do not just transcribe what is on screen. You may use at most one real on-screen number as proof; make the rest benefit/feature pills.' : '',
       avoid.length ? `Avoid repeating these titles: ${avoid.join(', ')}.` : '',
       `Return ONLY minified JSON: {"pills":[{"emoji":"","title":"","subtitle":""}]} with exactly ${count} pills.`,
     ].filter(Boolean).join(' ');
@@ -128,7 +128,7 @@ window.Kimi = (() => {
     const user = [
       `Screen: ${screenNote || 'app home screen'}.`,
       angle ? `Angle to lead with: ${angle}.` : '',
-      image ? 'A screenshot of the actual app screen is attached — write copy that matches what is genuinely shown.' : '',
+      image ? 'A screenshot of the app screen is attached. Identify which Spendaily feature it shows, then write benefit-led marketing copy ABOUT that feature (grounded in the blueprint) — sell the value, do not just describe the screen.' : '',
       'Return ONLY minified JSON: {"eyebrow":"","headline":[{"text":"","accent":false},{"text":"","accent":true}],"subtitle":""}.',
     ].filter(Boolean).join(' ');
     const data = await askJson([
@@ -231,5 +231,52 @@ window.Kimi = (() => {
     return screens;
   }
 
-  return { setBrand, ask, pills, copy, fonts, screenSet };
+  function clampNum(v, lo, hi, fb) { const n = Number(v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : fb; }
+
+  // ── Task: full auto-design from a screenshot ───────────────────────────────
+  // Kimi looks at the screenshot and recommends the WHOLE layout: copy, phone
+  // size/position, and pills with positions.
+  async function autoDesign({ screenNote = '', image = null, paletteIds = [], layout = 'auto' } = {}) {
+    const layoutGuide = {
+      centered: 'LAYOUT: a single CENTRED phone (x≈50, scale 50–60, rotation 0).',
+      bleed: 'LAYOUT: a single modern BLEED-OFF phone that runs off one side of the canvas (x≈90–106 or x≈ −6–10), larger (scale 72–92), optionally a slight rotation (−8..8). Place pills mostly on the opposite side.',
+      multiple: 'LAYOUT: TWO phone mockups — a primary phone plus a second offset one; one of them may bleed off an edge for a modern overlapping look. Keep them from fully covering each other.',
+      multiBleed: 'LAYOUT: TWO phone mockups that BOTH bleed off the canvas edges — e.g. one running off the left (x≈ −8–8) and one off the right (x≈92–108), or both overlapping and running off the same side. Larger phones (scale 72–96), small opposite rotations for a bold modern look.',
+      auto: 'LAYOUT: choose the most striking option for this feature — a centred phone, a single bleeding-off phone, or two phones (some bleeding off).',
+    }[layout] || '';
+    const sys = brandSystem(
+      'You are an App Store screenshot ART DIRECTOR. FIRST identify which Spendaily feature/section the attached screenshot shows ' +
+      '(e.g. daily number, rollover, goals, calendar, categories, insights, privacy, logging). THEN design the WHOLE marketing image ' +
+      'that SELLS THAT FEATURE using the brand blueprint — benefit-led copy and pills, not a transcription of the screen. ' +
+      'Output: eyebrow + two-line headline (the 2nd line is the accent line) + a one-line subtitle; choose the phone layout; ' +
+      'and place 4–6 floating feature pills around the phone(s). You may use one or two real on-screen numbers as proof, but lead with the value. ' +
+      layoutGuide + ' ' +
+      'COORDINATES are percentages 0–100 (x = left→right, y = top→bottom) of a tall portrait canvas. ' +
+      'The headline occupies the top (~y 5–30), so keep every pill below y≈38. Place pills in the margins (x≈10–24 and x≈76–90), spread vertically between y≈40 and y≈92, overlapping the phone edges a little. ' +
+      'Return phone layout as a "phones" array (1 or 2 entries).'
+    );
+    const user = [
+      `Screen: ${screenNote || 'app screen'}.`,
+      paletteIds.length ? `Palette id options (pick one that suits the screenshot): ${paletteIds.join(', ')}.` : '',
+      'Return ONLY minified JSON: {"eyebrow":"","headline":[{"text":"","accent":false},{"text":"","accent":true}],"subtitle":"","palette":"","phones":[{"scale":55,"x":50,"y":62,"rotation":0}],"pills":[{"emoji":"","title":"","subtitle":"","x":15,"y":45,"rotation":0,"style":"solid"}]}.',
+    ].filter(Boolean).join(' ');
+    const data = await askJson([{ role: 'system', content: sys }, userMsg(user, image)]);
+    let phonesArr = Array.isArray(data.phones) ? data.phones : (data.phone ? [data.phone] : []);
+    if (!phonesArr.length) phonesArr = [{ scale: 55, x: 50, y: 62, rotation: 0 }];
+    return {
+      eyebrow: String(data.eyebrow || '').toUpperCase().slice(0, 18),
+      headline: (Array.isArray(data.headline) ? data.headline : []).slice(0, 3).map((l, i) => ({ text: String(l.text || '').slice(0, 28), accent: l.accent != null ? !!l.accent : i > 0 })),
+      subtitle: String(data.subtitle || '').slice(0, 90),
+      palette: String(data.palette || '').slice(0, 24),
+      phones: phonesArr.slice(0, 3).map((ph) => ({ scale: clampNum(ph.scale, 28, 135, 55), x: clampNum(ph.x, -40, 140, 50), y: clampNum(ph.y, 18, 112, 62), rotation: clampNum(ph.rotation, -25, 25, 0) })),
+      pills: (Array.isArray(data.pills) ? data.pills : []).slice(0, 6).map((p) => ({
+        emoji: String(p.emoji || '✨').slice(0, 4), title: String(p.title || '').slice(0, 28), subtitle: String(p.subtitle || '').slice(0, 34),
+        x: clampNum(p.x, 2, 98, 50) / 100, y: clampNum(p.y, 2, 98, 50) / 100,
+        rotation: clampNum(p.rotation, -10, 10, 0),
+        style: ['solid', 'glass', 'tint'].includes(p.style) ? p.style : 'solid',
+      })),
+    };
+  }
+
+  return { setBrand, ask, pills, copy, fonts, screenSet, autoDesign };
 })();

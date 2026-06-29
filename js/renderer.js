@@ -237,6 +237,42 @@ window.Renderer = (() => {
     }
   }
 
+  // Panorama: one master gradient spanning all screens; each screen draws its
+  // horizontal slice so the colour flows continuously across the whole set.
+  function drawPanorama(ctx, W, H, pano, index, count, theme) {
+    const n = Math.max(1, count);
+    const i = Math.max(0, Math.min(n - 1, index));
+    const colors = (pano.colors && pano.colors.length) ? pano.colors : ['#EDE6FB', '#FBE6DD'];
+    const dark = theme && theme.mode === 'dark';
+
+    // 1) Continuous horizontal hue track — this screen draws its slice of one
+    //    master gradient spanning the whole set, so colour flows across seams.
+    const base = ctx.createLinearGradient(-i * W, 0, (n - i) * W, 0);
+    if (colors.length === 1) { base.addColorStop(0, colors[0]); base.addColorStop(1, colors[0]); }
+    else colors.forEach((c, k) => base.addColorStop(k / (colors.length - 1), c));
+    ctx.fillStyle = base;
+    ctx.fillRect(0, 0, W, H);
+
+    // 2) Uniform vertical sheen (identical on every screen, so seams stay
+    //    continuous) — gives each image a soft top-light → deeper-bottom gradient.
+    const v = ctx.createLinearGradient(0, 0, 0, H);
+    if (dark) {
+      v.addColorStop(0, 'rgba(255,255,255,0.10)'); v.addColorStop(0.5, 'rgba(255,255,255,0)'); v.addColorStop(1, 'rgba(0,0,0,0.22)');
+    } else {
+      v.addColorStop(0, 'rgba(255,255,255,0.32)'); v.addColorStop(0.5, 'rgba(255,255,255,0.02)'); v.addColorStop(1, 'rgba(40,20,70,0.07)');
+    }
+    ctx.fillStyle = v;
+    ctx.fillRect(0, 0, W, H);
+
+    // 3) Soft top-centre glow for depth.
+    if (pano.glow !== false) {
+      const glow = ctx.createRadialGradient(W * 0.5, H * 0.1, 0, W * 0.5, H * 0.1, W * 0.7);
+      glow.addColorStop(0, dark ? 'rgba(167,139,250,0.16)' : 'rgba(255,255,255,0.30)');
+      glow.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
+    }
+  }
+
   function drawMesh(ctx, W, H, bg) {
     const colors = bg.meshColors || ['#EDE6FB', '#F3E0F0', '#FBE6DD', '#E9E2FB'];
     ctx.fillStyle = colors[0];
@@ -268,11 +304,16 @@ window.Renderer = (() => {
 
     const blocks = [];
     let y = (h.y != null ? h.y : 0.05) * H;
+    const top = y;
+    let halfW = 0;
 
     // Eyebrow
     const eyebrow = h.eyebrow || {};
     if (eyebrow.show !== false && eyebrow.text) {
       const size = (eyebrow.size || 30) * sf;
+      ctx.font = `700 ${size}px ${fontStack(fonts.body || 'DM Sans')}`;
+      const ew = ctx.measureText(String(eyebrow.text).toUpperCase().split('').join('  ')).width;
+      halfW = Math.max(halfW, ew / 2 + size * 0.7 + size * 1.1); // text + flanking rules
       blocks.push({ kind: 'eyebrow', text: eyebrow.text, size, color: eyebrowColor, ruleColor, y, h: size });
       y += size + 34 * sf;
     }
@@ -296,19 +337,24 @@ window.Renderer = (() => {
       });
       const maxAllowed = W * 0.90;
       if (widest > maxAllowed) size = Math.max(size * (maxAllowed / widest), 40 * sf);
+      halfW = Math.max(halfW, Math.min(widest, maxAllowed) / 2);
       lines.forEach((ln) => {
         blocks.push({ kind: 'headline', text: ln.text, size, weight, tracking, lineHeight: lh, color: ln.accent ? accentColor : baseColor, font: fonts.display, y, h: size * lh });
         y += size * lh;
       });
-      y += 14 * sf;
+      y += 24 * sf;
     }
 
-    // Accent bar
+    // Accent mark — a centred bar (divider) or an underline drawn under a word.
     const bar = h.accentBar || {};
-    if (bar.show !== false) {
+    const mode = bar.mode || 'bar';
+    if (bar.show !== false && mode === 'bar') {
       const bw = (bar.width || 64) * sf, bh = (bar.height || 7) * sf;
+      halfW = Math.max(halfW, bw / 2);
       blocks.push({ kind: 'bar', w: bw, h: bh, color: ruleColor, y });
       y += bh + 30 * sf;
+    } else if (bar.show !== false && mode === 'underline') {
+      y += 18 * sf; // underline is drawn under the headline; just keep breathing room
     }
 
     // Subtitle
@@ -319,16 +365,54 @@ window.Renderer = (() => {
       const maxW = (sub.maxWidth || 0.78) * W;
       ctx.font = `${sub.weight || 500} ${size}px ${fontStack(fonts.body || 'DM Sans')}`;
       const wrapped = wrapText(ctx, sub.text, maxW);
+      let subHalf = 0;
+      wrapped.forEach((ln) => { subHalf = Math.max(subHalf, ctx.measureText(ln).width / 2); });
+      halfW = Math.max(halfW, subHalf);
       blocks.push({ kind: 'subtitle', lines: wrapped, size, lineHeight: lh, color: subColor, font: fonts.body, weight: sub.weight || 500, y, h: wrapped.length * size * lh });
       y += wrapped.length * size * lh;
     }
 
-    return { blocks, bottom: y, sf };
+    return { blocks, bottom: y, sf, top, halfW };
+  }
+
+  // Bounding box of the header content (for hit-testing / dragging).
+  function getHeaderRect(W, H, state) {
+    if (!state.header || state.header.show === false) return null;
+    const meas = document.createElement('canvas').getContext('2d');
+    const lay = layoutHeader(meas, W, H, state);
+    if (!lay.blocks.length) return null;
+    const cx = (state.header.x != null ? state.header.x : 0.5) * W;
+    const halfW = Math.max(lay.halfW, 60);
+    return { x: cx - halfW, y: lay.top, w: halfW * 2, h: Math.max(20, lay.bottom - lay.top) };
+  }
+
+  // Pixel range (relative to line centre) of a word within a centred line.
+  function wordRange(ctx, text, word, size, weight, font, tracking) {
+    if (!word) return null;
+    ctx.save();
+    ctx.font = `${weight} ${size}px ${fontStack(font || 'Poppins')}`;
+    const cps = [...String(text)];
+    const widths = cps.map((c) => ctx.measureText(c).width);
+    const left = []; let acc = 0;
+    for (let i = 0; i < cps.length; i++) { left[i] = acc; acc += widths[i] + tracking; }
+    const total = acc - tracking;
+    const sIdx = String(text).toLowerCase().indexOf(String(word).toLowerCase());
+    if (sIdx < 0) { ctx.restore(); return null; }
+    const startCp = [...String(text).slice(0, sIdx)].length;
+    const endCp = startCp + [...String(word)].length;
+    if (endCp > cps.length || endCp <= startCp) { ctx.restore(); return null; }
+    const start = -total / 2 + left[startCp];
+    const end = -total / 2 + left[endCp - 1] + widths[endCp - 1];
+    ctx.restore();
+    return { start, end };
   }
 
   function drawHeader(ctx, W, H, state) {
-    const { blocks } = layoutHeader(ctx, W, H, state);
-    const cx = W / 2;
+    const { blocks, sf } = layoutHeader(ctx, W, H, state);
+    const cx = (state.header && state.header.x != null ? state.header.x : 0.5) * W;
+    const ab = (state.header && state.header.accentBar) || {};
+    const underlineWord = (ab.show !== false && ab.mode === 'underline') ? ab.word : '';
+    const ruleColor = (state.theme && state.theme.accent2) || '#34D399';
     ctx.save();
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
@@ -354,6 +438,17 @@ window.Renderer = (() => {
         ctx.stroke();
       } else if (b.kind === 'headline') {
         drawTrackedLine(ctx, b.text, cx, b.y, b.size, b.weight, b.font, b.color, b.tracking);
+        if (underlineWord) {
+          const r = wordRange(ctx, b.text, underlineWord, b.size, b.weight, b.font, b.tracking);
+          if (r) {
+            const th = (ab.height || 7) * sf * 0.9;
+            const uy = b.y + b.size * 0.98;
+            const pad = b.size * 0.04;
+            ctx.fillStyle = ruleColor;
+            roundRect(ctx, cx + r.start - pad, uy, (r.end - r.start) + pad * 2, th, th / 2);
+            ctx.fill();
+          }
+        }
       } else if (b.kind === 'bar') {
         ctx.fillStyle = b.color;
         roundRect(ctx, cx - b.w / 2, b.y, b.w, b.h, b.h / 2);
@@ -559,6 +654,10 @@ window.Renderer = (() => {
       }
       ctx.font = `${m.emojiSize}px ${EMOJI_FONT}`;
       ctx.textAlign = 'left';
+      // Colour emoji ignore fillStyle; but where the browser renders an emoji as
+      // a monochrome glyph, fillStyle decides its colour — so set a dark fill
+      // (otherwise it inherits the white card colour and vanishes).
+      ctx.fillStyle = titleColor;
       ctx.fillText(pill.emoji, x, 1 * m.sf);
       x += m.emojiSize + m.gap;
     }
@@ -605,6 +704,16 @@ window.Renderer = (() => {
     const lx = dx * Math.cos(a) - dy * Math.sin(a);
     const ly = dx * Math.sin(a) + dy * Math.cos(a);
     return Math.abs(lx) <= rect.w / 2 && Math.abs(ly) <= rect.h / 2;
+  }
+
+  // Hit rects for this screen's own phones (for dragging)
+  function getPhoneRects(canvasW, canvasH, state) {
+    const frameType = state.device || 'iphone';
+    return (state.phones || []).filter((p) => p.show !== false).map((p) => {
+      const w = canvasW * ((p.scale != null ? p.scale : 55) / 100);
+      const h = w / getPhoneAspectRatio(frameType);
+      return { id: p.id, cx: (p.x != null ? p.x : 50) / 100 * canvasW, cy: (p.y != null ? p.y : 62) / 100 * canvasH, w, h, rotation: p.rotation || 0 };
+    });
   }
 
   // Horizontal edges of a phone as canvas fractions (for bleed detection)
@@ -664,7 +773,8 @@ window.Renderer = (() => {
     const W = canvas.width, H = canvas.height;
     ctx.clearRect(0, 0, W, H);
 
-    drawBackground(ctx, W, H, state.background, state.theme);
+    if (opts.panorama && opts.panorama.enabled) drawPanorama(ctx, W, H, opts.panorama, opts.index || 0, opts.count || 1, state.theme);
+    else drawBackground(ctx, W, H, state.background, state.theme);
 
     if (state.header && state.header.show !== false) drawHeader(ctx, W, H, state);
 
@@ -679,11 +789,25 @@ window.Renderer = (() => {
     for (const pill of (state.pills || [])) {
       drawPill(ctx, pill, W, H, fonts, { selected: pill.id === selectedId, accent });
     }
+
+    // Drag-guides (only while dragging on the interactive canvas). vx/hy are
+    // fractions (0..1); a guide line is drawn there to show alignment/snap.
+    const g = opts.guides;
+    if (g && (g.vx != null || g.hy != null)) {
+      ctx.save();
+      ctx.strokeStyle = accent;
+      ctx.globalAlpha = 0.9;
+      ctx.lineWidth = 2 * (W / DESIGN_W);
+      ctx.setLineDash([12 * (W / DESIGN_W), 9 * (W / DESIGN_W)]);
+      if (g.vx != null) { ctx.beginPath(); ctx.moveTo(g.vx * W, 0); ctx.lineTo(g.vx * W, H); ctx.stroke(); }
+      if (g.hy != null) { ctx.beginPath(); ctx.moveTo(0, g.hy * H); ctx.lineTo(W, g.hy * H); ctx.stroke(); }
+      ctx.restore();
+    }
   }
 
   return {
     render, drawBackground, drawPhoneMockup, drawPill,
-    getPhoneAspectRatio, getPillRects, hitTestPill, layoutHeader,
+    getPhoneAspectRatio, getPillRects, getPhoneRects, hitTestPill, layoutHeader, getHeaderRect,
     setAssetLoadCallback(fn) { onAssetLoad = fn; },
     FRAMES,
   };

@@ -14,6 +14,93 @@
   const TILT_SEQ = [-3, 3, -2, 4, -4, 2, -3, 2];
   const DEVICE_RES = { iphone: [1284, 2778], android: [1080, 2340] };
 
+  // Whole-SET layouts — each preset composes all screens together. build(i,n)
+  // returns the phone positions for screen i. A spanning phone (x≈100, no phone
+  // on the next screen) flows continuously across the seam (the renderer draws
+  // the neighbour's bleeding phone as a continuation). x/y are % of canvas.
+  const MOCKUP_PRESETS = [
+    {
+      id: 'set-flow', name: 'Continuous flow', desc: 'Centred openers, then phones span pairs of screens for a connected, panoramic feel.',
+      build: (i) => {
+        const seq = [
+          [{ scale: 60, x: 50, y: 61 }],               // 0 centred hero
+          [{ scale: 55, x: 50, y: 62 }],               // 1 centred
+          [{ scale: 78, x: 100, y: 59 }],              // 2 spans → 3
+          [],                                          // 3 continuation of 2
+          [{ scale: 55, x: 50, y: 62 }],               // 4 centred
+          [{ scale: 78, x: 100, y: 59 }],              // 5 spans → 6
+          [],                                          // 6 continuation of 5
+          [{ scale: 55, x: 50, y: 62 }],               // 7 centred
+          [{ scale: 78, x: 100, y: 59 }],              // 8 spans → 9
+          [],                                          // 9 continuation of 8
+        ];
+        return seq[i % seq.length];
+      },
+    },
+    {
+      id: 'set-mixed', name: 'Designed mix', desc: 'A curated rhythm: bold hero, a spanning pair, clean centres, bottom bleeds and a tilt.',
+      build: (i) => {
+        const seq = [
+          [{ scale: 64, x: 50, y: 60 }],               // hero
+          [{ scale: 78, x: 100, y: 58 }],              // span →
+          [],                                          // continuation
+          [{ scale: 55, x: 50, y: 62 }],               // centre
+          [{ scale: 82, x: 50, y: 86 }],               // bleed bottom
+          [{ scale: 58, x: 50, y: 62, rotation: -6 }], // tilt
+          [{ scale: 78, x: 100, y: 58 }],              // span →
+          [],                                          // continuation
+          [{ scale: 55, x: 50, y: 62 }],               // centre
+          [{ scale: 88, x: 50, y: 87 }],               // bleed bottom big
+        ];
+        return seq[i % seq.length];
+      },
+    },
+    {
+      id: 'set-panorama', name: 'Full panorama', desc: 'Every pair of screens shares one big phone — a bold, fully continuous set.',
+      build: (i) => (i % 2 === 0 ? [{ scale: 80, x: 100, y: 60 }] : []),
+    },
+    {
+      id: 'set-bold', name: 'Bold bleeds', desc: 'Every screen bleeds dramatically, alternating edges and angles. Maximum energy.',
+      build: (i) => {
+        const seq = [
+          [{ scale: 82, x: 50, y: 86 }],               // bottom
+          [{ scale: 80, x: 84, y: 60, rotation: -8 }], // right angled
+          [{ scale: 86, x: 70, y: 80, rotation: -12 }],// diagonal corner
+          [{ scale: 80, x: 16, y: 60, rotation: 8 }],  // left angled
+          [{ scale: 100, x: 50, y: 80 }],              // giant centre
+        ];
+        return seq[i % seq.length];
+      },
+    },
+    {
+      id: 'set-zigzag', name: 'Zig-zag', desc: 'Phones bleed off alternating left and right edges down the whole set.',
+      build: (i) => (i % 2 === 0 ? [{ scale: 74, x: 86, y: 60, rotation: -5 }] : [{ scale: 74, x: 14, y: 60, rotation: 5 }]),
+    },
+    {
+      id: 'set-calm', name: 'Calm & clean', desc: 'All phones fully visible with gentle tilts — a tidy, premium, no-bleed set.',
+      build: (i) => {
+        const seq = [
+          [{ scale: 56, x: 50, y: 62 }],
+          [{ scale: 56, x: 50, y: 62, rotation: -5 }],
+          [{ scale: 56, x: 50, y: 62 }],
+          [{ scale: 56, x: 50, y: 62, rotation: 5 }],
+        ];
+        return seq[i % seq.length];
+      },
+    },
+    {
+      id: 'set-hero-rest', name: 'Hero, then flow', desc: 'A big centred first screen to hook, then a continuous spanning flow for the rest.',
+      build: (i) => {
+        if (i === 0) return [{ scale: 66, x: 50, y: 60 }];
+        return ((i - 1) % 2 === 0) ? [{ scale: 78, x: 100, y: 59 }] : [];
+      },
+    },
+    {
+      id: 'set-twin', name: 'Twin mockups', desc: 'Two angled phones on every screen — great for showing two views at once.',
+      build: () => [{ scale: 48, x: 34, y: 64, rotation: -5 }, { scale: 48, x: 66, y: 60, rotation: 5 }],
+    },
+  ];
+
   let brand = null;
   let screens = [];
   let activeIndex = 0;
@@ -30,7 +117,7 @@
   const ctx = canvas.getContext('2d');
   let showNeighbors = false;   // "show all screens side-by-side while editing"
   let stripCanvases = [];      // context canvas per screen index (active slot = #canvas)
-  let panorama = { enabled: false, glow: true, colors: ['#EDE6FB', '#F3E0F0', '#FBE6DD', '#FBE3EC', '#E9E2FB'] };
+  let panorama = { enabled: false, glow: true, hue: 0, sat: 100, light: 0, colors: ['#EDE6FB', '#F3E0F0', '#FBE6DD', '#FBE3EC', '#E9E2FB'] };
   let savedPanoramas = [];
 
   const screen = () => screens[activeIndex];
@@ -284,9 +371,38 @@
   function persistSavedPanoramas() { try { localStorage.setItem(panoStoreKey(), JSON.stringify(savedPanoramas)); } catch {} }
   function builtinPanoramas() { return (((window.BRAND_CONTENT || {})[brand.id] || {}).panoramas) || []; }
   function allPanoramas() { return builtinPanoramas().concat(savedPanoramas); }
+  // ── Colour utilities (for panorama resampling + adjusted preview) ──────────
+  function pHexToRgb(hex) { const h = String(hex).replace('#', ''); const n = h.length === 3 ? h.split('').map((c) => c + c).join('') : h; return { r: parseInt(n.slice(0, 2), 16), g: parseInt(n.slice(2, 4), 16), b: parseInt(n.slice(4, 6), 16) }; }
+  function pRgbToHex(r, g, b) { const c = (v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0'); return `#${c(r)}${c(g)}${c(b)}`; }
+  function pSample(colors, t) {
+    if (colors.length === 1) return colors[0];
+    const seg = t * (colors.length - 1); const i = Math.floor(seg); const f = seg - i;
+    const a = pHexToRgb(colors[Math.min(i, colors.length - 1)]); const b = pHexToRgb(colors[Math.min(i + 1, colors.length - 1)]);
+    return pRgbToHex(a.r + (b.r - a.r) * f, a.g + (b.g - a.g) * f, a.b + (b.b - a.b) * f);
+  }
+  function resampleColors(colors, n) { const src = (colors && colors.length) ? colors : ['#EDE6FB', '#FBE6DD']; const out = []; for (let i = 0; i < n; i++) out.push(pSample(src, n <= 1 ? 0 : i / (n - 1))); return out; }
+  function pAdjust(hex, hueDeg, satMul, lightAdd) {
+    let { r, g, b } = pHexToRgb(hex); r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b); let h, s, l = (max + min) / 2;
+    if (max === min) { h = s = 0; } else { const d = max - min; s = l > 0.5 ? d / (2 - max - min) : d / (max + min); if (max === r) h = (g - b) / d + (g < b ? 6 : 0); else if (max === g) h = (b - r) / d + 2; else h = (r - g) / d + 4; h /= 6; }
+    h = ((h * 360 + hueDeg) % 360 + 360) % 360 / 360; s = Math.max(0, Math.min(1, s * satMul)); l = Math.max(0, Math.min(1, l + lightAdd));
+    const h2 = (p, q, t) => { if (t < 0) t += 1; if (t > 1) t -= 1; if (t < 1 / 6) return p + (q - p) * 6 * t; if (t < 1 / 2) return q; if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6; return p; };
+    let R, G, B; if (s === 0) { R = G = B = l; } else { const q = l < 0.5 ? l * (1 + s) : l + s - l * s; const p = 2 * l - q; R = h2(p, q, h + 1 / 3); G = h2(p, q, h); B = h2(p, q, h - 1 / 3); }
+    return pRgbToHex(R * 255, G * 255, B * 255);
+  }
+  function adjustedPanoColors() {
+    const hue = panorama.hue || 0, satMul = (panorama.sat != null ? panorama.sat : 100) / 100, lightAdd = (panorama.light || 0) / 100;
+    return panorama.colors.map((c) => ((hue || satMul !== 1 || lightAdd) ? pAdjust(c, hue, satMul, lightAdd) : c));
+  }
+  // Keep one colour anchor per screen so editing a screen blends into neighbours.
+  function syncPanoramaAnchors() {
+    const n = screens.length || 1;
+    if (!panorama.colors || panorama.colors.length !== n) panorama.colors = resampleColors(panorama.colors, n);
+  }
+
   function gradientCss(colors) { return `linear-gradient(90deg, ${colors.join(',')})`; }
   function applyPanorama(colors) {
-    panorama.colors = colors.slice();
+    panorama.colors = resampleColors(colors, screens.length || colors.length);
     renderPanoStops(); updatePanoPreview(); requestRender(); if (showNeighbors) renderNeighbors();
   }
   function renderPanoPresets() {
@@ -310,17 +426,17 @@
   }
   function renderPanoStops() {
     const wrap = $('pano-stops'); if (!wrap) return;
+    syncPanoramaAnchors();
     wrap.innerHTML = '';
     panorama.colors.forEach((c, i) => {
       const row = document.createElement('div');
       row.className = 'grad-stop';
-      row.innerHTML = `<input type="color" value="${c}"><span class="gs-hex">${c}</span><button class="gs-del" title="Remove">×</button>`;
+      row.innerHTML = `<span class="ps-label">${i + 1}</span><input type="color" value="${c}"><span class="gs-hex">${c}</span>`;
       row.querySelector('input').addEventListener('input', (e) => { panorama.colors[i] = e.target.value; row.querySelector('.gs-hex').textContent = e.target.value; updatePanoPreview(); requestRender(); if (showNeighbors) renderNeighbors(); });
-      row.querySelector('.gs-del').addEventListener('click', () => { if (panorama.colors.length <= 2) return; panorama.colors.splice(i, 1); renderPanoStops(); updatePanoPreview(); requestRender(); if (showNeighbors) renderNeighbors(); });
       wrap.appendChild(row);
     });
   }
-  function updatePanoPreview() { const el = $('pano-preview'); if (el) el.style.background = gradientCss(panorama.colors); }
+  function updatePanoPreview() { const el = $('pano-preview'); if (el) el.style.background = gradientCss(adjustedPanoColors()); }
 
   // Seed both libraries once (per brand, versioned) from the curated content pack.
   function seedLibraries() {
@@ -337,11 +453,11 @@
     } catch {}
     try {
       const k = `shotsmith:textsetseed:${brand.id}`;
-      if (localStorage.getItem(k) !== '2') {
+      if (localStorage.getItem(k) !== '3') {
         const starterSets = brand.screens.map((sc) => ({ eyebrow: sc.eyebrow, headline: (sc.headline || []).map((l) => ({ text: l.text, accent: !!l.accent })), subtitle: sc.subtitle }));
         addTextSets(starterSets);
         addTextSets(content.textSets || []);
-        localStorage.setItem(k, '2');
+        localStorage.setItem(k, '3');
       }
     } catch {}
   }
@@ -356,27 +472,46 @@
   function onEmojiOutside(e) { if (emojiPop && !emojiPop.contains(e.target)) closeEmojiPicker(); }
   function openEmojiPicker(anchor, onPick) {
     closeEmojiPicker();
+    const lib = window.EMOJI_LIBRARY || [];
     const pop = document.createElement('div');
     pop.className = 'emoji-pop';
-    pop.innerHTML = '<div class="ep-head">Pick an emoji<span class="ep-x">×</span></div><div class="ep-grid"></div>';
+    pop.innerHTML = '<div class="ep-head">Pick an emoji<span class="ep-x">×</span></div>'
+      + '<input class="ep-search" type="text" placeholder="Search emojis (money, happy, food, arrow…)">'
+      + '<div class="ep-grid"></div>';
     document.body.appendChild(pop);
     emojiPop = pop;
     const grid = pop.querySelector('.ep-grid');
-    (window.EMOJI_LIBRARY || []).forEach((cat) => {
-      const h = document.createElement('div'); h.className = 'ep-cat'; h.textContent = cat.name; grid.appendChild(h);
-      const row = document.createElement('div'); row.className = 'ep-row';
-      cat.emojis.forEach((em) => {
-        const b = document.createElement('div'); b.className = 'ep-em'; b.textContent = em;
-        b.addEventListener('click', () => { onPick(em); closeEmojiPicker(); });
-        row.appendChild(b);
+    const search = pop.querySelector('.ep-search');
+
+    const buildGrid = (q) => {
+      grid.innerHTML = '';
+      const query = (q || '').trim().toLowerCase();
+      let shown = 0;
+      lib.forEach((cat) => {
+        const hay = `${cat.name} ${cat.keywords || ''}`.toLowerCase();
+        if (query && !hay.includes(query)) return;
+        const h = document.createElement('div'); h.className = 'ep-cat'; h.textContent = cat.name; grid.appendChild(h);
+        const row = document.createElement('div'); row.className = 'ep-row';
+        cat.emojis.forEach((em) => {
+          const b = document.createElement('div'); b.className = 'ep-em'; b.textContent = em;
+          b.title = em;
+          b.addEventListener('click', () => { onPick(em); closeEmojiPicker(); });
+          row.appendChild(b);
+        });
+        grid.appendChild(row);
+        shown++;
       });
-      grid.appendChild(row);
-    });
+      if (!shown) { const e = document.createElement('div'); e.className = 'ep-empty'; e.textContent = 'No matching group — try “money”, “happy”, “arrow”…'; grid.appendChild(e); }
+    };
+    buildGrid('');
+    search.addEventListener('input', () => buildGrid(search.value));
+    search.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeEmojiPicker(); });
+
     pop.querySelector('.ep-x').addEventListener('click', closeEmojiPicker);
     const r = anchor.getBoundingClientRect();
-    pop.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - 312))}px`;
-    pop.style.top = `${Math.min(r.bottom + 6, window.innerHeight - 348)}px`;
-    setTimeout(() => document.addEventListener('mousedown', onEmojiOutside, true), 0);
+    pop.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - 332))}px`;
+    pop.style.top = `${Math.max(8, Math.min(r.bottom + 6, window.innerHeight - 432))}px`;
+    setTimeout(() => { document.addEventListener('mousedown', onEmojiOutside, true); search.focus(); }, 0);
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -403,6 +538,7 @@
     requestAnimationFrame(() => {
       renderPending = false;
       if (!screens[activeIndex]) return;
+      if (panorama.enabled) syncPanoramaAnchors();
       renderScreenTo(canvas, activeIndex, { selectedPillId, guides: dragGuides });
       // A change to this screen's phone changes the neighbour continuations, so
       // refresh them (debounced). Skip while dragging pills/text (no effect),
@@ -439,6 +575,7 @@
     const w = `${canvas.width * scale}px`, h = `${canvas.height * scale}px`;
     $('filmstrip').querySelectorAll('canvas').forEach((c) => { c.style.width = w; c.style.height = h; });
     $('zoom-level').textContent = userZoom === 1 ? 'Fit' : `${Math.round(userZoom * 100)}%`;
+    if (showNeighbors) requestAnimationFrame(positionActiveDot);
   }
 
   // Build the editing filmstrip. When "show all" is on, every screen renders in
@@ -447,6 +584,7 @@
   function renderNeighbors() {
     const strip = $('filmstrip');
     strip.classList.toggle('has-neighbors', showNeighbors);
+    $('canvas-host').classList.toggle('multi', showNeighbors);
     stripCanvases = [];
     if (!showNeighbors) {
       strip.innerHTML = ''; strip.appendChild(canvas); stripCanvases[activeIndex] = canvas;
@@ -462,8 +600,18 @@
       stripCanvases[i] = c; frag.appendChild(c);
     });
     strip.innerHTML = ''; strip.appendChild(frag);
+    const dot = document.createElement('div'); dot.id = 'active-dot'; dot.className = 'active-dot'; strip.appendChild(dot);
     fitCanvas();
+    requestAnimationFrame(positionActiveDot);
     try { canvas.scrollIntoView({ inline: 'center', block: 'nearest' }); } catch {}
+  }
+  // Place the "selected" dot just above the active screen (inside the filmstrip,
+  // so it scrolls with the strip).
+  function positionActiveDot() {
+    const dot = $('active-dot');
+    if (!dot) return;
+    dot.style.left = `${canvas.offsetLeft + canvas.offsetWidth / 2}px`;
+    dot.style.top = `${canvas.offsetTop}px`;
   }
   // Cheap update while editing — only the screens adjacent to the active one can
   // change (their bleed continuation of the active phone).
@@ -531,11 +679,15 @@
       let cy = pt.y / canvas.height - drag.dy;
       const guides = { vx: null, hy: null };
       // Snap to the nearest candidate within threshold; record the guide line.
-      const snapTo = (val, candidates) => {
-        let best = null, bestD = SNAP;
+      const snapTo = (val, candidates, thresh = SNAP) => {
+        let best = null, bestD = thresh;
         for (const c of candidates) { const d = Math.abs(val - c); if (d < bestD) { bestD = d; best = c; } }
         return best;
       };
+      // Seam guide: when an item is dragged near a screen edge, snap its centre to
+      // the seam (0 = left/prev screen, 1 = right/next screen) so it splits cleanly
+      // across the two screens. Generous threshold so it's easy to catch.
+      const seamSnap = () => { const se = snapTo(cx, [0, 1], 0.04); if (se != null) { cx = se; guides.vx = se; } };
 
       if (drag.kind === 'pill') {
         const others = screen().pills.filter((x) => x.id !== drag.id);
@@ -544,28 +696,44 @@
         others.forEach((o) => { xc.push(o.x, 1 - o.x); yc.push(o.y); });
         const sx = snapTo(cx, xc); if (sx != null) { cx = sx; guides.vx = sx; }
         const sy = snapTo(cy, yc); if (sy != null) { cy = sy; guides.hy = sy; }
+        if (drag.bleed) seamSnap();
         const lo = drag.bleed ? -0.6 : 0.02, hi = drag.bleed ? 1.6 : 0.98;
         const p = screen().pills.find((x) => x.id === drag.id);
         if (p) { p.x = clampN(cx, lo, hi); p.y = clampN(cy, lo, hi); }
       } else if (drag.kind === 'phone') {
+        const p = screen().phones.find((x) => x.id === drag.id);
+        const noBleed = p && p.bleed === false;
         const sx = snapTo(cx, [0.5]); if (sx != null) { cx = sx; guides.vx = sx; }
         const sy = snapTo(cy, [0.5]); if (sy != null) { cy = sy; guides.hy = sy; }
-        const p = screen().phones.find((x) => x.id === drag.id);
-        if (p) { p.x = clampN(cx * 100, -120, 220); p.y = clampN(cy * 100, -20, 130); syncDeviceControls(); }
-      } else { // header
+        if (!noBleed) seamSnap(); // phones continue across the seam unless bleed is disabled
+        if (p) {
+          if (noBleed) { const half = (p.scale != null ? p.scale : 55) / 2; p.x = clampN(cx * 100, half, 100 - half); p.y = clampN(cy * 100, 0, 100); }
+          else { p.x = clampN(cx * 100, -120, 220); p.y = clampN(cy * 100, -20, 130); }
+          syncDeviceControls();
+        }
+      } else { // header (text block) — generous centre snap so bleeding text is easy to centre
         const h = screen().header;
-        const sx = snapTo(cx, [0.5]); if (sx != null) { cx = sx; guides.vx = sx; }
+        const HSNAP = 0.045;
+        if (Math.abs(cx - 0.5) < HSNAP) { cx = 0.5; guides.vx = 0.5; }
         const centerY = cy + (drag.halfH || 0);
-        if (Math.abs(centerY - 0.5) < SNAP) { cy = 0.5 - (drag.halfH || 0); guides.hy = 0.5; }
-        const lo = drag.bleed ? -0.6 : 0.02, hi = drag.bleed ? 1.6 : 0.98;
+        if (Math.abs(centerY - 0.5) < HSNAP) { cy = 0.5 - (drag.halfH || 0); guides.hy = 0.5; }
+        if (drag.bleed) seamSnap();
+        const lo = drag.bleed ? -0.8 : 0.02, hi = drag.bleed ? 1.8 : 0.98;
         h.x = clampN(cx, lo, hi);
-        h.y = clampN(cy, drag.bleed ? -0.4 : 0, drag.bleed ? 1.4 : 0.92);
+        h.y = clampN(cy, drag.bleed ? -0.5 : 0, drag.bleed ? 1.5 : 0.92);
       }
       dragGuides = (guides.vx != null || guides.hy != null) ? guides : null;
       requestRender();
     });
 
-    const end = () => { if (drag) { drag = null; dragGuides = null; canvas.classList.remove('dragging'); requestRender(); if (showNeighbors) renderNeighbors(); } };
+    const end = () => {
+      if (!drag) return;
+      const k = drag.kind;
+      drag = null; dragGuides = null; canvas.classList.remove('dragging'); requestRender(); if (showNeighbors) renderNeighbors();
+      // Reflect the dragged position back into the manual-entry fields.
+      if (k === 'pill') renderPillList();
+      else if (k === 'header') { const h = screen().header; const hx = Math.round((h.x != null ? h.x : 0.5) * 100), hy = Math.round((h.y != null ? h.y : 0.05) * 100); $('header-x').value = hx; $('v-header-x').value = hx; $('header-y').value = hy; $('v-header-y').value = hy; }
+    };
     canvas.addEventListener('pointerup', end);
     canvas.addEventListener('pointercancel', end);
 
@@ -663,9 +831,16 @@
     $('btn-redo').addEventListener('click', redo);
     // Drafts
     $('btn-save-draft').addEventListener('click', saveDraft);
+    $('btn-export-json').addEventListener('click', exportProjectFile);
+    $('btn-import-json').addEventListener('click', () => $('import-json-input').click());
+    $('import-json-input').addEventListener('change', (e) => { const f = e.target.files && e.target.files[0]; if (f) importProjectFile(f); e.target.value = ''; });
     $('btn-drafts').addEventListener('click', openDraftsMenu);
     $('drafts-close').addEventListener('click', closeDraftsMenu);
     $('drafts-overlay').addEventListener('click', (e) => { if (e.target.id === 'drafts-overlay') closeDraftsMenu(); });
+    // Mockup-position presets (Layouts menu)
+    $('btn-layouts').addEventListener('click', openLayoutsMenu);
+    $('layouts-close').addEventListener('click', closeLayoutsMenu);
+    $('layouts-overlay').addEventListener('click', (e) => { if (e.target.id === 'layouts-overlay') closeLayoutsMenu(); });
     // All screens side-by-side (inline, while editing)
     $('btn-all-screens').addEventListener('click', () => {
       showNeighbors = !showNeighbors;
@@ -680,11 +855,19 @@
       refreshAfterProjectChange(); resetHistory();
       toast('Reset to starter screens');
     });
-    // Autosave banner (restore last session)
+    // Autosave banner (restore last session) — try the live autosave, then the
+    // rolling backup, before giving up (and point at the recovery page).
     $('draft-resume').addEventListener('click', async () => {
-      try { const proj = await idbGet(`autosave:${brand.id}`); if (proj) { restoreProject(proj); refreshAfterProjectChange(); resetHistory(); toast('Restored your last session'); } }
-      catch { toast('Could not restore session', true); }
-      $('draft-banner').classList.add('hidden');
+      const tryLoad = async (key) => { const proj = await idbGet(key); if (proj && Array.isArray(proj.screens) && proj.screens.length) { restoreProject(proj); refreshAfterProjectChange(); resetHistory(); return true; } return false; };
+      try {
+        if (await tryLoad(`autosave:${brand.id}`)) { toast('Restored your last session'); $('draft-banner').classList.add('hidden'); return; }
+        if (await tryLoad(`autosave-prev:${brand.id}`)) { toast('Restored from backup'); $('draft-banner').classList.add('hidden'); return; }
+        toast('Could not restore — open /recover.html to recover it', true);
+      } catch (e) {
+        console.error('restore failed', e);
+        try { if (await tryLoad(`autosave-prev:${brand.id}`)) { toast('Restored from backup'); $('draft-banner').classList.add('hidden'); return; } } catch {}
+        toast('Could not restore — open /recover.html to recover it', true);
+      }
     });
     $('draft-discard').addEventListener('click', async () => { try { await idbDel(`autosave:${brand.id}`); } catch {} $('draft-banner').classList.add('hidden'); });
 
@@ -721,9 +904,16 @@
       renderTextSetSelect();
       toast(n ? 'Saved to text-set library' : 'Already in library');
     });
+    $('ai-textset').addEventListener('click', aiTextSet);
     bindInput('subtitle-text', (v) => { screen().header.subtitle.text = v; screen().header.subtitle.show = !!v; });
-    bindRange('header-y', (v) => { screen().header.y = +v / 100; });
-    $('header-bleed').addEventListener('change', () => { screen().header.bleed = $('header-bleed').checked; });
+    bindRange('header-x', (v) => { screen().header.x = +v / 100; $('v-header-x').value = v; if (showNeighbors) renderNeighbors(); });
+    bindRange('header-y', (v) => { screen().header.y = +v / 100; $('v-header-y').value = v; if (showNeighbors) renderNeighbors(); });
+    bindNum('v-header-x', 'header-x', (v) => { screen().header.x = v / 100; });
+    bindNum('v-header-y', 'header-y', (v) => { screen().header.y = v / 100; });
+    $('header-centre-x').addEventListener('click', () => { screen().header.x = 0.5; $('header-x').value = 50; $('v-header-x').value = 50; requestRender(); if (showNeighbors) renderNeighbors(); });
+    $('header-copy-pos').addEventListener('click', () => { const h = screen().header; setPosClip(h.x != null ? h.x : 0.5, h.y != null ? h.y : 0.05, 0); });
+    $('header-paste-pos').addEventListener('click', () => { if (!needPosClip()) return; const h = screen().header; h.x = posClipboard.x; h.y = posClipboard.y; const hx = Math.round(h.x * 100), hy = Math.round(h.y * 100); $('header-x').value = hx; $('v-header-x').value = hx; $('header-y').value = hy; $('v-header-y').value = hy; requestRender(); if (showNeighbors) renderNeighbors(); });
+    $('header-bleed').addEventListener('change', () => { screen().header.bleed = $('header-bleed').checked; requestRender(); if (showNeighbors) renderNeighbors(); });
     bindCheckbox('theme-dark', (v) => { screen().theme.mode = v ? 'dark' : 'light'; });
 
     // ---- Pills panel ----
@@ -770,9 +960,13 @@
     $('pano-enable').addEventListener('change', () => {
       panorama.enabled = $('pano-enable').checked;
       $('pano-controls').classList.toggle('hidden', !panorama.enabled);
+      if (panorama.enabled) { syncPanoramaAnchors(); renderPanoStops(); updatePanoPreview(); }
       requestRender(); if (showNeighbors) renderNeighbors();
     });
-    $('pano-add').addEventListener('click', () => { panorama.colors.push('#ffffff'); renderPanoStops(); updatePanoPreview(); requestRender(); if (showNeighbors) renderNeighbors(); });
+    const panoAdjust = () => { updatePanoPreview(); requestRender(); if (showNeighbors) renderNeighbors(); };
+    $('pano-hue').addEventListener('input', (e) => { panorama.hue = +e.target.value; $('v-pano-hue').textContent = `${e.target.value}°`; panoAdjust(); });
+    $('pano-tone').addEventListener('input', (e) => { panorama.light = +e.target.value; $('v-pano-tone').textContent = e.target.value; panoAdjust(); });
+    $('pano-vibrancy').addEventListener('input', (e) => { panorama.sat = +e.target.value; $('v-pano-vib').textContent = `${e.target.value}%`; panoAdjust(); });
     $('pano-save').addEventListener('click', () => {
       const name = prompt('Name this panorama', `My panorama ${savedPanoramas.length + 1}`);
       if (!name) return;
@@ -780,20 +974,33 @@
       persistSavedPanoramas(); renderPanoPresets(); toast('Saved to panorama library');
     });
 
-    // ---- Device panel ---- (controls target the active phone on this screen)
-    bindCheckbox('phone-show', (v) => { activePhone().show = v; });
-    bindRange('phone-scale', (v) => { activePhone().scale = +v; $('v-scale').textContent = `${v}%`; });
-    bindRange('phone-x', (v) => { activePhone().x = +v; $('v-x').textContent = `${v}%`; });
-    bindRange('phone-y', (v) => { activePhone().y = +v; $('v-y').textContent = `${v}%`; });
-    bindRange('phone-rotation', (v) => { activePhone().rotation = +v; $('v-rot').textContent = `${v}°`; });
-    const bumpLayer = (d) => { const p = activePhone(); p.z = (p.z || 0) + d; $('v-z').textContent = p.z; requestRender(); if (showNeighbors) renderNeighbors(); };
+    // ---- Device panel ---- (controls target the active phone on this screen;
+    // a screen may legitimately have no phone, e.g. a spanning continuation)
+    bindCheckbox('phone-show', (v) => { const p = activePhone(); if (p) p.show = v; });
+    bindCheckbox('phone-bleed', (v) => {
+      const p = activePhone(); if (!p) return;
+      p.bleed = v;
+      if (!v) { const half = (p.scale != null ? p.scale : 55) / 2; p.x = Math.max(half, Math.min(100 - half, p.x)); p.y = Math.max(0, Math.min(100, p.y)); syncDeviceControls(); }
+      if (showNeighbors) renderNeighbors();
+    });
+    bindRange('phone-scale', (v) => { const p = activePhone(); if (p) p.scale = +v; $('v-scale').value = v; });
+    bindRange('phone-x', (v) => { const p = activePhone(); if (p) p.x = +v; $('v-x').value = v; });
+    bindRange('phone-y', (v) => { const p = activePhone(); if (p) p.y = +v; $('v-y').value = v; });
+    bindRange('phone-rotation', (v) => { const p = activePhone(); if (p) p.rotation = +v; $('v-rot').value = v; });
+    bindNum('v-scale', 'phone-scale', (v) => { const p = activePhone(); if (p) p.scale = v; });
+    bindNum('v-x', 'phone-x', (v) => { const p = activePhone(); if (p) p.x = v; });
+    bindNum('v-y', 'phone-y', (v) => { const p = activePhone(); if (p) p.y = v; });
+    bindNum('v-rot', 'phone-rotation', (v) => { const p = activePhone(); if (p) p.rotation = v; });
+    $('phone-copy-pos').addEventListener('click', () => { const p = activePhone(); if (p) setPosClip(p.x / 100, p.y / 100, p.rotation); });
+    $('phone-paste-pos').addEventListener('click', () => { const p = activePhone(); if (!p || !needPosClip()) return; p.x = Math.round(posClipboard.x * 100); p.y = Math.round(posClipboard.y * 100); if (posClipboard.rotation != null) p.rotation = Math.max(-35, Math.min(35, posClipboard.rotation)); syncDeviceControls(); requestRender(); if (showNeighbors) renderNeighbors(); });
+    const bumpLayer = (d) => { const p = activePhone(); if (!p) return; p.z = (p.z || 0) + d; $('v-z').textContent = p.z; requestRender(); if (showNeighbors) renderNeighbors(); };
     $('phone-front').addEventListener('click', () => bumpLayer(1));
     $('phone-back').addEventListener('click', () => bumpLayer(-1));
-    bindCheckbox('phone-shadow', (v) => { activePhone().shadow = v; });
-    bindRange('shadow-intensity', (v) => { activePhone().shadowIntensity = +v; $('v-shadow').textContent = `${v}%`; });
-    bindRange('shadow-blur', (v) => { activePhone().shadowBlur = +v; $('v-blur').textContent = v; });
+    bindCheckbox('phone-shadow', (v) => { const p = activePhone(); if (p) p.shadow = v; });
+    bindRange('shadow-intensity', (v) => { const p = activePhone(); if (p) p.shadowIntensity = +v; $('v-shadow').textContent = `${v}%`; });
+    bindRange('shadow-blur', (v) => { const p = activePhone(); if (p) p.shadowBlur = +v; $('v-blur').textContent = v; });
     setupUpload();
-    $('btn-clear-shot').addEventListener('click', () => { activePhone().screenshot = null; syncDeviceControls(); requestRender(); if (showNeighbors) renderNeighbors(); });
+    $('btn-clear-shot').addEventListener('click', () => { const p = activePhone(); if (p) p.screenshot = null; syncDeviceControls(); requestRender(); if (showNeighbors) renderNeighbors(); });
 
     // Add / remove phone mockups
     $('btn-add-phone').addEventListener('click', () => {
@@ -808,8 +1015,9 @@
     document.querySelectorAll('[data-bleed]').forEach((b) => b.addEventListener('click', () => {
       const mode = b.dataset.bleed;
       const x = mode === 'left' ? 4 : mode === 'right' ? 96 : 50;
-      activePhone().x = x;
-      $('phone-x').value = x; $('v-x').textContent = `${x}%`;
+      const p = activePhone(); if (!p) return;
+      p.x = x;
+      $('phone-x').value = x; $('v-x').value = x;
       requestRender();
       if (showNeighbors) renderNeighbors();
     }));
@@ -847,6 +1055,23 @@
   function bindSelect(id, fn) { $(id).addEventListener('change', () => { fn($(id).value); requestRender(); }); }
   function bindCheckbox(id, fn) { $(id).addEventListener('change', () => { fn($(id).checked); requestRender(); }); }
   function bindColor(id, fn) { $(id).addEventListener('input', () => { fn($(id).value); requestRender(); }); }
+  // Two-way bind a number input to its range slider so a value can be typed
+  // exactly (and can exceed the slider's range for extreme/bleed placement).
+  function bindNum(numId, rangeId, apply) {
+    const num = $(numId), rng = $(rangeId);
+    if (!num) return;
+    num.addEventListener('input', () => {
+      const v = +num.value; if (Number.isNaN(v)) return;
+      apply(v);
+      if (rng) rng.value = Math.max(+rng.min, Math.min(+rng.max, v));
+      requestRender(); if (showNeighbors) renderNeighbors();
+    });
+  }
+  // Position clipboard — stored as fractions so a placement copied from a pill,
+  // phone or the headline can be pasted onto any of them.
+  let posClipboard = null;
+  function setPosClip(xFrac, yFrac, rotation) { posClipboard = { x: xFrac, y: yFrac, rotation: rotation }; toast('Position copied'); }
+  function needPosClip() { if (!posClipboard) { toast('Copy a position first', true); return false; } return true; }
 
   // ──────────────────────────────────────────────────────────────────────────
   // Panel sync (when switching screens)
@@ -864,7 +1089,10 @@
     populateAccentWords();
     $('accent-word').style.display = (ab.show !== false && (ab.mode || 'bar') === 'underline') ? '' : 'none';
     $('subtitle-text').value = s.header.subtitle.text || '';
-    $('header-y').value = Math.round((s.header.y || 0.05) * 100);
+    const hx = Math.round((s.header.x != null ? s.header.x : 0.5) * 100);
+    $('header-x').value = hx; $('v-header-x').value = hx;
+    const hy = Math.round((s.header.y || 0.05) * 100);
+    $('header-y').value = hy; $('v-header-y').value = hy;
     $('header-bleed').checked = s.header.bleed === true;
     $('theme-dark').checked = s.theme.mode === 'dark';
 
@@ -878,6 +1106,12 @@
     $('font-display').value = s.fonts.display;
     $('font-body').value = s.fonts.body;
     updateFontPreview();
+
+    // Panorama tone sliders + per-screen anchors (project-level)
+    $('pano-hue').value = panorama.hue || 0; $('v-pano-hue').textContent = `${panorama.hue || 0}°`;
+    $('pano-tone').value = panorama.light || 0; $('v-pano-tone').textContent = `${panorama.light || 0}`;
+    $('pano-vibrancy').value = panorama.sat != null ? panorama.sat : 100; $('v-pano-vib').textContent = `${panorama.sat != null ? panorama.sat : 100}%`;
+    if (panorama.enabled) { syncPanoramaAnchors(); renderPanoStops(); updatePanoPreview(); }
 
     $('ai-brief').value = s.screenNote || '';
   }
@@ -911,11 +1145,18 @@
   }
   function syncDeviceControls() {
     const p = activePhone();
+    if (!p) {
+      $('phone-show').checked = false;
+      $('upload-zone').classList.remove('has-img');
+      $('upload-zone').querySelector('span').textContent = 'No mockup here — drop a screen / click to add';
+      return;
+    }
     $('phone-show').checked = p.show !== false;
-    $('phone-scale').value = p.scale; $('v-scale').textContent = `${p.scale}%`;
-    $('phone-x').value = p.x; $('v-x').textContent = `${p.x}%`;
-    $('phone-y').value = p.y; $('v-y').textContent = `${p.y}%`;
-    $('phone-rotation').value = p.rotation; $('v-rot').textContent = `${p.rotation}°`;
+    $('phone-bleed').checked = p.bleed !== false;
+    $('phone-scale').value = p.scale; $('v-scale').value = p.scale;
+    $('phone-x').value = p.x; $('v-x').value = p.x;
+    $('phone-y').value = p.y; $('v-y').value = p.y;
+    $('phone-rotation').value = p.rotation; $('v-rot').value = p.rotation;
     $('v-z').textContent = p.z || 0;
     $('phone-shadow').checked = p.shadow !== false;
     $('shadow-intensity').value = p.shadowIntensity; $('v-shadow').textContent = `${p.shadowIntensity}%`;
@@ -1034,6 +1275,21 @@
         for (let r = -10; r <= 10; r += 2) rot.add(new Option(`${r}°`, r, false, p.rotation === r));
         rot.addEventListener('change', (e) => { p.rotation = +e.target.value; requestRender(); });
       }
+      // Precise position entry + copy/paste, appended to every pill row.
+      const posRow = document.createElement('div');
+      posRow.className = 'pr-meta';
+      posRow.innerHTML = `
+        <label class="pr-mini">X <input type="number" class="pr-num pr-x" value="${Math.round((p.x != null ? p.x : 0.5) * 100)}" min="-60" max="160">%</label>
+        <label class="pr-mini">Y <input type="number" class="pr-num pr-y" value="${Math.round((p.y != null ? p.y : 0.5) * 100)}" min="-60" max="160">%</label>
+        <label class="pr-mini">⟲ <input type="number" class="pr-num pr-rotn" value="${p.rotation || 0}" min="-45" max="45">°</label>
+        <button class="pr-cp" title="Copy position">⧉</button>
+        <button class="pr-pp" title="Paste position">⤵</button>`;
+      row.appendChild(posRow);
+      posRow.querySelector('.pr-x').addEventListener('input', (e) => { p.x = (+e.target.value) / 100; requestRender(); if (showNeighbors) renderNeighbors(); });
+      posRow.querySelector('.pr-y').addEventListener('input', (e) => { p.y = (+e.target.value) / 100; requestRender(); if (showNeighbors) renderNeighbors(); });
+      posRow.querySelector('.pr-rotn').addEventListener('input', (e) => { p.rotation = +e.target.value || 0; requestRender(); if (showNeighbors) renderNeighbors(); });
+      posRow.querySelector('.pr-cp').addEventListener('click', () => setPosClip(p.x != null ? p.x : 0.5, p.y != null ? p.y : 0.5, p.rotation || 0));
+      posRow.querySelector('.pr-pp').addEventListener('click', () => { if (!needPosClip()) return; p.x = posClipboard.x; p.y = posClipboard.y; if (posClipboard.rotation != null) p.rotation = posClipboard.rotation; renderPillList(); requestRender(); if (showNeighbors) renderNeighbors(); });
       const scaleEl = row.querySelector('.pr-scale');
       if (scaleEl) scaleEl.addEventListener('input', (e) => { p.scale = (+e.target.value) / 100; requestRender(); });
       row.querySelectorAll('.pr-lz').forEach((b) => b.addEventListener('click', () => movePill(p, +b.dataset.d)));
@@ -1163,7 +1419,12 @@
     const reader = new FileReader();
     reader.onload = () => {
       const img = new Image();
-      img.onload = () => { activePhone().screenshot = img; syncDeviceControls(); renderPhoneTabs(); requestRender(); if (showNeighbors) renderNeighbors(); };
+      img.onload = () => {
+        let p = activePhone();
+        if (!p) { p = defaultPhone(); screen().phones.push(p); screen().activePhone = screen().phones.length - 1; }
+        p.screenshot = img;
+        syncDeviceControls(); renderPhoneTabs(); requestRender(); if (showNeighbors) renderNeighbors();
+      };
       img.src = reader.result;
     };
     reader.readAsDataURL(file);
@@ -1221,6 +1482,25 @@
       addToLibrary(out.pills);
       aiBusy(false); syncAllPanels(); renderLibrary(); requestRender(); if (showNeighbors) renderNeighbors();
       toast('Kimi designed the screen ✨');
+    } catch (e) { aiFail(e); }
+  }
+
+  // Strategic text set (Text panel) — marketing-grade, blueprint + screenshot aware.
+  async function aiTextSet() {
+    const image = screenshotDataURL();
+    toast(image ? 'Kimi is reading the screen & writing…' : 'Kimi is writing a strategic text set…');
+    aiBusy(true, image ? 'Reading screenshot & writing…' : 'Writing a strategic text set…');
+    try {
+      const note = $('ai-brief').value || screen().screenNote;
+      const out = await Kimi.copy({ screenNote: note, image });
+      const h = screen().header;
+      if (out.eyebrow) { h.eyebrow.text = out.eyebrow; h.eyebrow.show = true; }
+      if (out.headline.length) h.headline.lines = out.headline;
+      if (out.subtitle) { h.subtitle.text = out.subtitle; h.subtitle.show = true; }
+      addTextSets([{ eyebrow: out.eyebrow, headline: out.headline, subtitle: out.subtitle }]);
+      renderTextSetSelect();
+      aiBusy(false); syncAllPanels(); requestRender();
+      toast('Strategic text set written ✨ (also saved to your library)');
     } catch (e) { aiFail(e); }
   }
 
@@ -1402,6 +1682,39 @@
     requestRender(); if (showNeighbors) renderNeighbors();
   }
 
+  // ── File backup / restore (durable — survives storage clears) ──────────────
+  function exportProjectFile() {
+    try {
+      const blob = new Blob([JSON.stringify(serializeProject())], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+      a.download = `shotsmith-${brand.id}-${stamp}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      toast('Backup downloaded ✓');
+    } catch (e) { console.error(e); toast('Could not export file', true); }
+  }
+  function importProjectFile(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        let data = JSON.parse(reader.result);
+        // Accept either a project, or a full recover.html dump (pick the biggest project).
+        if (data && Array.isArray(data.entries)) {
+          const projects = data.entries.map((e) => e.value).filter((v) => v && Array.isArray(v.screens));
+          projects.sort((a, b) => JSON.stringify(b).length - JSON.stringify(a).length);
+          data = projects[0];
+        }
+        if (!data || !Array.isArray(data.screens) || !data.screens.length) { toast('That file has no project in it', true); return; }
+        restoreProject(data); refreshAfterProjectChange(); resetHistory();
+        closeDraftsMenu(); toast('Project imported ✓');
+      } catch (e) { console.error(e); toast('Could not read that file', true); }
+    };
+    reader.onerror = () => toast('Could not read that file', true);
+    reader.readAsText(file);
+  }
+
   // ── Named drafts (multiple, in IndexedDB) ──────────────────────────────────
   const draftListKey = () => `list:${brand.id}`;
   const draftDataKey = (id) => `data:${brand.id}:${id}`;
@@ -1484,7 +1797,24 @@
 
   // Auto-save the working session so nothing is lost (separate from named drafts)
   let autoTimer = null;
-  function autoSave() { clearTimeout(autoTimer); autoTimer = setTimeout(() => { idbPut(`autosave:${brand.id}`, serializeProject()).catch(() => {}); }, 1500); }
+  let lastBackupTs = 0;
+  function autoSave() {
+    clearTimeout(autoTimer);
+    autoTimer = setTimeout(async () => {
+      const proj = serializeProject();
+      try {
+        // Keep a rolling backup so a single bad/interrupted write can't wipe everything.
+        if (Date.now() - lastBackupTs > 20000) {
+          const prev = await idbGet(`autosave:${brand.id}`).catch(() => null);
+          if (prev) { await idbPut(`autosave-prev:${brand.id}`, prev).catch(() => {}); lastBackupTs = Date.now(); }
+        }
+        await idbPut(`autosave:${brand.id}`, proj);
+      } catch (e) {
+        console.error('autosave failed', e);
+        toast('Auto-save failed (storage full?) — Export or Drafts → Save a draft now', true);
+      }
+    }, 1500);
+  }
   async function maybeOfferAutosave() {
     try { const raw = await idbGet(`autosave:${brand.id}`); $('draft-banner').classList.toggle('hidden', !raw); }
     catch { $('draft-banner').classList.add('hidden'); }
@@ -1524,6 +1854,7 @@
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedPillId) { e.preventDefault(); deleteSelectedPill(); return; }
       if (e.key === 'Escape') {
         if (emojiPop) closeEmojiPicker();
+        else if (!$('layouts-overlay').classList.contains('hidden')) closeLayoutsMenu();
         else if (!$('drafts-overlay').classList.contains('hidden')) closeDraftsMenu();
         else if (selectedPillId) { selectedPillId = null; renderPillList(); requestRender(); }
         return;
@@ -1545,6 +1876,70 @@
   function escapeHtml(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
   function escapeAttr(s) { return String(s == null ? '' : s).replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
 
+  // ── Mockup-position presets (Layouts menu, with previews) ──────────────────
+  function miniRoundRect(ctx, x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx.beginPath(); ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+  // Preview the WHOLE set: a strip of mini-screens (gap 0) with phones drawn at
+  // global positions so spanning/bleeding phones flow across the seams.
+  function drawSetPreview(cv, preset) {
+    const ctx = cv.getContext('2d'); const W = cv.width, H = cv.height;
+    const n = screens.length || 10;
+    const slotW = W / n;
+    const phoneAspect = Renderer.getPhoneAspectRatio(device);
+    ctx.clearRect(0, 0, W, H);
+    for (let i = 0; i < n; i++) {
+      const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#ece6fb'); g.addColorStop(1, '#f7e7ec');
+      ctx.fillStyle = g; ctx.fillRect(i * slotW, 0, slotW, H);
+      ctx.strokeStyle = 'rgba(0,0,0,0.07)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(i * slotW, 0); ctx.lineTo(i * slotW, H); ctx.stroke();
+    }
+    for (let i = 0; i < n; i++) {
+      (preset.build(i, n) || []).forEach((pos) => {
+        const pw = (pos.scale / 100) * slotW;
+        const ph = pw / phoneAspect;
+        ctx.save();
+        ctx.translate(i * slotW + (pos.x / 100) * slotW, (pos.y / 100) * H);
+        if (pos.rotation) ctx.rotate(pos.rotation * Math.PI / 180);
+        miniRoundRect(ctx, -pw / 2, -ph / 2, pw, ph, pw * 0.16); ctx.fillStyle = '#20202a'; ctx.fill();
+        miniRoundRect(ctx, -pw / 2 + pw * 0.08, -ph / 2 + pw * 0.08, pw - pw * 0.16, ph - pw * 0.16, pw * 0.1); ctx.fillStyle = '#cdbff0'; ctx.fill();
+        ctx.restore();
+      });
+    }
+  }
+  function renderLayoutsMenu() {
+    const grid = $('layouts-grid'); if (!grid) return;
+    const n = screens.length || 10;
+    const aspect = DEVICE_RES[device][0] / DEVICE_RES[device][1];
+    const slotW = 52;
+    grid.innerHTML = '';
+    MOCKUP_PRESETS.forEach((p) => {
+      const card = document.createElement('div'); card.className = 'set-card'; card.title = `Apply "${p.name}" across all ${n} screens`;
+      const cv = document.createElement('canvas');
+      cv.width = n * slotW; cv.height = Math.round(slotW / aspect); cv.className = 'set-prev';
+      drawSetPreview(cv, p);
+      const info = document.createElement('div'); info.className = 'set-info';
+      info.innerHTML = `<b>${escapeHtml(p.name)}</b><span>${escapeHtml(p.desc || '')}</span>`;
+      card.append(cv, info);
+      card.addEventListener('click', () => applyMockupPreset(p));
+      grid.appendChild(card);
+    });
+  }
+  function applyMockupPreset(preset) {
+    screens.forEach((s, i) => {
+      const shots = s.phones.map((p) => p.screenshot).filter(Boolean);
+      s.phones = preset.build(i, screens.length).map((pos, k) => defaultPhone({ scale: pos.scale, x: pos.x, y: pos.y, rotation: pos.rotation || 0, z: k, screenshot: shots[k] || shots[0] || null }));
+      s.activePhone = 0;
+    });
+    closeLayoutsMenu();
+    renderScreenTabs(); syncAllPanels(); requestRender(); if (showNeighbors) renderNeighbors();
+    toast(`Applied "${preset.name}" to all ${screens.length} screens`);
+  }
+  function openLayoutsMenu() { renderLayoutsMenu(); $('layouts-overlay').classList.remove('hidden'); }
+  function closeLayoutsMenu() { $('layouts-overlay').classList.add('hidden'); }
+
   // ──────────────────────────────────────────────────────────────────────────
   // Boot
   // ──────────────────────────────────────────────────────────────────────────
@@ -1556,6 +1951,19 @@
     // Dev affordance: ?dev=1 auto-selects the first brand for headless rendering.
     // Optional &screen=N (1-based) and &device=android jump to a specific view.
     const params = new URLSearchParams(location.search);
+    if (params.get('recover') === '1') {
+      const first = Object.values(window.BRANDS || {})[0];
+      if (first) chooseBrand(first).then(async () => {
+        try {
+          const proj = await idbGet('recover:latest');
+          if (proj && Array.isArray(proj.screens) && proj.screens.length) {
+            restoreProject(proj); refreshAfterProjectChange(); resetHistory();
+            toast('Recovered your work ✓ — export it now, or Drafts → Save a draft');
+          } else { toast('Nothing staged to recover', true); }
+        } catch (e) { console.error('recover failed', e); toast('Recover failed — use the .json download instead', true); }
+      });
+      return;
+    }
     if (params.get('dev') === '1') {
       const first = Object.values(window.BRANDS || {})[0];
       if (first) chooseBrand(first).then(() => {
@@ -1569,6 +1977,14 @@
         if (params.get('addphone') === '1') $('btn-add-phone').click();
         if (params.get('pano') === '1') { const c = $('pano-enable'); c.checked = true; c.dispatchEvent(new Event('change')); }
         if (params.get('light') === '1') $('btn-theme').click();
+        if (params.get('layouts') === '1') openLayoutsMenu();
+        if (params.get('textbleed') === '1') { screen().header.headline.size = 200; const cb = $('header-bleed'); cb.checked = true; cb.dispatchEvent(new Event('change')); }
+        if (params.get('guidetest')) { dragGuides = { vx: parseFloat(params.get('guidetest')), hy: null }; renderScreenTo(canvas, activeIndex, { guides: dragGuides }); }
+        if (params.get('loadtest')) { fetch('/recovered-project.json').then((r) => r.json()).then((p) => { restoreProject(p); refreshAfterProjectChange(); resetHistory(); toast('Rebuilt project loaded — re-upload screenshots, then save'); }); }
+        if (params.get('emoji')) { setTimeout(() => { openEmojiPicker($('panel-pills') || document.body, () => {}); const q = params.get('emoji'); if (q !== '1' && emojiPop) { const s = emojiPop.querySelector('.ep-search'); s.value = q; s.dispatchEvent(new Event('input')); } }, 150); }
+        if (params.get('nobleed')) { const s0 = screens[0]; const ph = s0.phones[0]; ph.x = 96; ph.scale = 62; ph.bleed = (params.get('nobleed') === 'on'); switchScreen(1); requestRender(); }
+        if (params.get('conttest') === '1') { const s0 = screens[0]; s0.header.bleed = true; s0.header.x = 0.82; s0.header.headline.size = 150; const fp = s0.pills.find((p) => p.kind !== 'rating'); if (fp) { fp.bleed = true; fp.x = 1.03; fp.y = 0.55; } switchScreen(1); requestRender(); }
+        if (params.get('applyLayout')) { const pr = MOCKUP_PRESETS.find((x) => x.id === params.get('applyLayout')); if (pr) applyMockupPreset(pr); }
         if (params.get('exporttest')) {
           const idx = Math.max(0, (parseInt(params.get('exporttest'), 10) || 1) - 1);
           setTimeout(() => {

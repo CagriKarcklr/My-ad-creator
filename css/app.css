@@ -126,7 +126,7 @@ h4 { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 6px; 
 /* ============ Workspace ============ */
 .workspace { flex: 1; display: grid; grid-template-columns: 1fr 372px; min-height: 0; }
 
-.stage { display: flex; flex-direction: column; min-height: 0; background: radial-gradient(120% 100% at 50% 0%, var(--surface-2), var(--bg)); }
+.stage { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: radial-gradient(120% 100% at 50% 0%, var(--surface-2), var(--bg)); }
 .screen-tabs {
   display: flex; gap: 6px; padding: 10px 14px; overflow-x: auto; border-bottom: 1px solid var(--border-soft); flex: 0 0 auto;
 }
@@ -145,21 +145,23 @@ h4 { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 6px; 
 }
 .screen-tab-add:hover { color: var(--text); border-color: var(--accent); }
 
-.canvas-host { flex: 1; min-height: 0; display: grid; place-items: center; padding: 22px; overflow: hidden; position: relative; }
+.canvas-host { flex: 1; min-height: 0; min-width: 0; display: grid; place-items: center; padding: 22px; overflow: hidden; position: relative; }
+/* All-screens view: let the filmstrip scroll horizontally (and never push the panel) */
+.canvas-host.multi { place-items: center start; overflow-x: auto; overflow-y: hidden; }
 /* gap:0 keeps the seam pixel-continuous so a bleeding phone lines up exactly
    across images (an 8px gap made the continued half slide). */
-.filmstrip { display: flex; align-items: center; justify-content: center; gap: 0; }
+.filmstrip { display: flex; align-items: center; justify-content: center; gap: 0; position: relative; }
 .filmstrip canvas { background: #fff; max-width: none; max-height: none; flex: 0 0 auto; border-radius: 8px; }
 #canvas {
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5); touch-action: none; cursor: grab; position: relative; z-index: 2;
 }
 #canvas.dragging { cursor: grabbing; }
-.filmstrip canvas.neighbor { opacity: 0.62; filter: saturate(0.95); pointer-events: none; }
+/* All screens shown at full colour (no dimming) so colour judgement is true.
+   The active screen is marked only by a small dot above it (see .active-dot). */
+.filmstrip canvas.neighbor { opacity: 1; pointer-events: none; }
 .filmstrip canvas.neighbor.empty { visibility: hidden; }
-/* When neighbours are shown, square the touching edges so nothing notches the seam. */
 .filmstrip.has-neighbors #canvas { border-radius: 0; box-shadow: none; }
-.filmstrip.has-neighbors #canvas-prev { border-radius: 8px 0 0 8px; }
-.filmstrip.has-neighbors #canvas-next { border-radius: 0 8px 8px 0; }
+.active-dot { position: absolute; width: 11px; height: 11px; border-radius: 50%; background: var(--accent); box-shadow: 0 2px 8px rgba(124, 58, 237, 0.5); margin-top: -12px; transform: translate(-50%, -100%); pointer-events: none; z-index: 5; }
 
 .bleed-presets { display: flex; gap: 7px; }
 .bleed-presets .btn { flex: 1; }
@@ -203,6 +205,10 @@ h4 { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 6px; 
 
 .field-label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin: 14px 0 6px; }
 .field-label i { float: right; font-style: normal; color: var(--text); font-variant-numeric: tabular-nums; }
+.field-label .num-mini { float: right; width: 56px; padding: 1px 6px; margin-top: -3px; font-size: 12px; font-weight: 600; text-align: right; color: var(--text); background: var(--surface-3); border: 1px solid var(--border); border-radius: 6px; font-variant-numeric: tabular-nums; }
+.field-label .num-mini:focus { outline: none; border-color: var(--accent); }
+.pr-num { width: 44px; padding: 1px 4px; font-size: 11px; text-align: right; background: var(--surface-3); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-variant-numeric: tabular-nums; }
+.pr-num:focus { outline: none; border-color: var(--accent); }
 .field-label:first-child { margin-top: 0; }
 .row { display: flex; gap: 10px; align-items: center; }
 .row.between { justify-content: space-between; }
@@ -301,6 +307,15 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 6px; }
 .draft-item .di-info span { font-size: 11px; color: var(--muted); }
 .draft-item .di-actions { display: flex; gap: 6px; flex: 0 0 auto; }
 
+/* mockup SET layouts menu */
+.modal.modal-wide { width: 760px; }
+#layouts-grid { display: grid; gap: 10px; }
+.set-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface-2); cursor: pointer; transition: 0.15s; }
+.set-card:hover { border-color: var(--accent); box-shadow: var(--shadow); }
+.set-prev { width: 100%; height: auto; border-radius: 6px; display: block; box-shadow: 0 3px 12px rgba(0, 0, 0, 0.22); }
+.set-info b { font-size: 13.5px; font-weight: 700; }
+.set-info span { display: block; font-size: 11.5px; color: var(--muted); margin-top: 2px; line-height: 1.35; }
+
 /* overview — all screens side by side */
 .modal-overlay.overview { display: flex; flex-direction: column; place-items: stretch; padding: 0; background: rgba(8, 8, 12, 0.93); }
 .overview-bar { display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--surface); }
@@ -324,10 +339,13 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 6px; }
 
 /* emoji picker popover */
 .emoji-pop {
-  position: fixed; z-index: 80; width: 304px; max-height: 340px; background: var(--surface);
+  position: fixed; z-index: 80; width: 324px; max-height: 424px; background: var(--surface);
   border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
   display: flex; flex-direction: column; overflow: hidden;
 }
+.emoji-pop .ep-search { margin: 8px 10px 2px; padding: 7px 10px; font-size: 13px; color: var(--text); background: var(--surface-3); border: 1px solid var(--border); border-radius: 8px; }
+.emoji-pop .ep-search:focus { outline: none; border-color: var(--accent); }
+.emoji-pop .ep-empty { padding: 18px 12px; font-size: 12px; color: var(--muted); text-align: center; }
 .emoji-pop .ep-head { padding: 9px 12px; font-size: 12px; font-weight: 700; color: var(--muted); border-bottom: 1px solid var(--border-soft); display: flex; justify-content: space-between; align-items: center; }
 .emoji-pop .ep-head .ep-x { cursor: pointer; opacity: 0.6; font-size: 15px; }
 .emoji-pop .ep-head .ep-x:hover { opacity: 1; }
@@ -374,6 +392,8 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 6px; }
 .grad-stop input[type="color"] { width: 38px; height: 30px; }
 .grad-stop .gs-hex { flex: 1; font-size: 12px; font-variant-numeric: tabular-nums; }
 .grad-stop .gs-del { width: 28px; height: 30px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface-3); color: var(--muted); cursor: pointer; }
+.grad-stop .ps-label { width: 16px; flex: 0 0 auto; font-size: 11px; font-weight: 600; color: var(--muted); text-align: center; }
+#pano-stops { max-height: 220px; overflow-y: auto; }
 
 /* upload */
 .upload { border: 1.5px dashed var(--border); border-radius: var(--radius-sm); padding: 18px; text-align: center; color: var(--muted); font-size: 12.5px; cursor: pointer; transition: 0.15s; }

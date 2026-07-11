@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shotsmith — Recover work</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, system-ui, sans-serif; background: #0f0f14; color: #ECECF1; padding: 28px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #9a9aae; margin: 0 0 20px; }
+  .bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+  button { font: inherit; font-weight: 600; cursor: pointer; border-radius: 9px; border: 1px solid #34343f; background: #1c1c24; color: #ECECF1; padding: 9px 14px; }
+  button.primary { background: #7C3AED; border-color: #7C3AED; }
+  button:hover { filter: brightness(1.12); }
+  .card { border: 1px solid #2a2a34; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; background: #16161d; }
+  .card.best { border-color: #34D399; box-shadow: 0 0 0 1px #34D39955 inset; }
+  .key { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #b9b9ff; word-break: break-all; }
+  .meta { color: #9a9aae; font-size: 13px; margin: 6px 0 10px; }
+  .meta b { color: #ECECF1; }
+  .names { color: #cfcfe0; font-size: 12.5px; margin: 4px 0 12px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: #2a2a34; color: #cfcfe0; margin-left: 8px; }
+  .tag.green { background: #134e3a; color: #6ee7b7; }
+  .empty { color: #9a9aae; padding: 30px; text-align: center; border: 1px dashed #34343f; border-radius: 12px; }
+  #log { white-space: pre-wrap; font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #9a9aae; margin-top: 18px; }
+  a.editor { color: #b9b9ff; }
+</style>
+</head>
+<body>
+  <h1>Recover your Shotsmith work</h1>
+  <p class="sub">This reads the browser database directly. Everything saved is listed below — <b>download each one to a file</b> so it can never be lost again, then send the file to the editor.</p>
+  <div class="bar">
+    <button class="primary" id="dl-all">⬇ Download EVERYTHING (one backup file)</button>
+    <button id="reload">↻ Re-scan</button>
+    <a class="editor" href="/" >← Back to editor</a>
+  </div>
+  <div id="list"></div>
+  <div id="log"></div>
+
+<script>
+const DB = 'shotsmith', STORE = 'drafts';
+const logEl = document.getElementById('log');
+const log = (m) => { logEl.textContent += m + '\n'; };
+
+function openDB() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(DB);
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function readAll() {
+  const db = await openDB();
+  if (!db.objectStoreNames.contains(STORE)) { return []; }
+  return new Promise((res, rej) => {
+    const out = [];
+    const tx = db.transaction(STORE, 'readonly');
+    const cur = tx.objectStore(STORE).openCursor();
+    cur.onsuccess = (e) => { const c = e.target.result; if (c) { out.push({ key: c.key, value: c.value }); c.continue(); } else res(out); };
+    cur.onerror = () => rej(cur.error);
+  });
+}
+function download(filename, obj) {
+  const blob = new Blob([JSON.stringify(obj)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+function bytes(obj) { try { return new Blob([JSON.stringify(obj)]).size; } catch { return 0; } }
+function fmt(n) { return n > 1e6 ? (n/1e6).toFixed(1)+' MB' : n > 1e3 ? (n/1e3).toFixed(0)+' KB' : n+' B'; }
+function isProject(v) { return v && typeof v === 'object' && Array.isArray(v.screens); }
+function shotCount(v) { let n = 0; (v.screens||[]).forEach(s => (s.phones||[]).forEach(p => { if (p.shot) n++; })); return n; }
+
+let entries = [];
+async function scan() {
+  document.getElementById('list').innerHTML = '';
+  logEl.textContent = '';
+  try {
+    entries = await readAll();
+  } catch (e) { log('Error reading database: ' + e); return; }
+  if (!entries.length) {
+    document.getElementById('list').innerHTML = '<div class="empty">No saved data found in this browser.<br>If you used a different browser or profile to do the work, open this page there.</div>';
+    return;
+  }
+  // Projects first, biggest (most content) first — your finished work is likely the largest.
+  const projects = entries.filter(e => isProject(e.value)).sort((a,b) => bytes(b.value) - bytes(a.value));
+  const others = entries.filter(e => !isProject(e.value));
+  log('Found ' + entries.length + ' entr' + (entries.length===1?'y':'ies') + ' (' + projects.length + ' look like projects).');
+
+  const list = document.getElementById('list');
+  projects.forEach((e, i) => {
+    const v = e.value, n = (v.screens||[]).length, shots = shotCount(v);
+    const card = document.createElement('div');
+    card.className = 'card' + (i === 0 ? ' best' : '');
+    const names = (v.screens||[]).map(s => s.name || '?').join(' · ');
+    card.innerHTML =
+      '<div class="key">' + e.key + (i===0 ? '<span class="tag green">most likely your work</span>' : '') + '</div>' +
+      '<div class="meta"><b>' + n + '</b> screens · <b>' + shots + '</b> screenshots · device <b>' + (v.device||'?') + '</b> · panorama ' + ((v.panorama&&v.panorama.enabled)?'on':'off') + ' · size <b>' + fmt(bytes(v)) + '</b></div>' +
+      '<div class="names">' + names + '</div>' +
+      '<div class="row"></div>';
+    const row = card.querySelector('.row');
+    const dl = document.createElement('button'); dl.className = 'primary'; dl.textContent = '⬇ Download this project (.json)';
+    dl.onclick = () => download('shotsmith-' + String(e.key).replace(/[^a-z0-9]+/gi,'-') + '.json', v);
+    const use = document.createElement('button'); use.textContent = '↩ Load this into the editor';
+    use.onclick = () => sendToEditor(v);
+    row.append(dl, use);
+    list.appendChild(card);
+  });
+  others.forEach((e) => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = '<div class="key">' + e.key + ' <span class="tag">index / other</span></div><div class="meta">size ' + fmt(bytes(e.value)) + '</div><div class="row"></div>';
+    const dl = document.createElement('button'); dl.textContent = '⬇ Download';
+    dl.onclick = () => download('shotsmith-' + String(e.key).replace(/[^a-z0-9]+/gi,'-') + '.json', e.value);
+    card.querySelector('.row').appendChild(dl);
+    list.appendChild(card);
+  });
+}
+async function sendToEditor(project) {
+  try {
+    const db = await openDB();
+    await new Promise((res, rej) => { const tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).put(project, 'recover:latest'); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+    location.href = '/?recover=1';
+  } catch (e) { log('Could not stage for editor: ' + e + '\nUse the Download button instead, then Import in the editor.'); }
+}
+document.getElementById('dl-all').onclick = () => download('shotsmith-backup-all.json', { exportedAt: new Date().toISOString(), entries });
+document.getElementById('reload').onclick = scan;
+scan();
+</script>
+</body>
+</html>

@@ -239,17 +239,51 @@ window.Renderer = (() => {
 
   // Panorama: one master gradient spanning all screens; each screen draws its
   // horizontal slice so the colour flows continuously across the whole set.
+  // Adjust a hex colour by hue rotation (deg), saturation multiplier, lightness add.
+  function hexToRgb(hex) {
+    const h = String(hex).replace('#', '');
+    const n = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+    return { r: parseInt(n.slice(0, 2), 16), g: parseInt(n.slice(2, 4), 16), b: parseInt(n.slice(4, 6), 16) };
+  }
+  function rgbToHex(r, g, b) { const c = (v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0'); return `#${c(r)}${c(g)}${c(b)}`; }
+  function adjustColor(hex, hueDeg, satMul, lightAdd) {
+    let { r, g, b } = hexToRgb(hex); r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b); let h, s, l = (max + min) / 2;
+    if (max === min) { h = s = 0; } else {
+      const d = max - min; s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      if (max === r) h = (g - b) / d + (g < b ? 6 : 0); else if (max === g) h = (b - r) / d + 2; else h = (r - g) / d + 4;
+      h /= 6;
+    }
+    h = ((h * 360 + (hueDeg || 0)) % 360 + 360) % 360 / 360;
+    s = Math.max(0, Math.min(1, s * (satMul == null ? 1 : satMul)));
+    l = Math.max(0, Math.min(1, l + (lightAdd || 0)));
+    const h2 = (p, q, t) => { if (t < 0) t += 1; if (t > 1) t -= 1; if (t < 1 / 6) return p + (q - p) * 6 * t; if (t < 1 / 2) return q; if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6; return p; };
+    let R, G, B;
+    if (s === 0) { R = G = B = l; } else { const q = l < 0.5 ? l * (1 + s) : l + s - l * s; const p = 2 * l - q; R = h2(p, q, h + 1 / 3); G = h2(p, q, h); B = h2(p, q, h - 1 / 3); }
+    return rgbToHex(R * 255, G * 255, B * 255);
+  }
+
   function drawPanorama(ctx, W, H, pano, index, count, theme) {
     const n = Math.max(1, count);
     const i = Math.max(0, Math.min(n - 1, index));
-    const colors = (pano.colors && pano.colors.length) ? pano.colors : ['#EDE6FB', '#FBE6DD'];
+    let colors = (pano.colors && pano.colors.length) ? pano.colors : ['#EDE6FB', '#FBE6DD'];
     const dark = theme && theme.mode === 'dark';
 
-    // 1) Continuous horizontal hue track — this screen draws its slice of one
-    //    master gradient spanning the whole set, so colour flows across seams.
+    // Global tone controls (hue shift / vibrancy / tone) applied to every anchor.
+    const hue = pano.hue || 0, satMul = (pano.sat != null ? pano.sat : 100) / 100, lightAdd = (pano.light || 0) / 100;
+    if (hue || satMul !== 1 || lightAdd) colors = colors.map((c) => adjustColor(c, hue, satMul, lightAdd));
+
+    // 1) Continuous horizontal track — this screen draws its slice of one master
+    //    gradient spanning the whole set, so colour flows across seams. When there
+    //    is one colour per screen, anchors sit at each screen's centre so editing
+    //    a screen's colour blends smoothly into its neighbours.
     const base = ctx.createLinearGradient(-i * W, 0, (n - i) * W, 0);
     if (colors.length === 1) { base.addColorStop(0, colors[0]); base.addColorStop(1, colors[0]); }
-    else colors.forEach((c, k) => base.addColorStop(k / (colors.length - 1), c));
+    else if (colors.length === n) {
+      base.addColorStop(0, colors[0]);
+      colors.forEach((c, k) => base.addColorStop((k + 0.5) / n, c));
+      base.addColorStop(1, colors[n - 1]);
+    } else colors.forEach((c, k) => base.addColorStop(k / (colors.length - 1), c));
     ctx.fillStyle = base;
     ctx.fillRect(0, 0, W, H);
 
@@ -335,9 +369,11 @@ window.Renderer = (() => {
         for (let i = 0; i < chars.length; i++) lw += ctx.measureText(chars[i]).width + (i < chars.length - 1 ? tracking : 0);
         widest = Math.max(widest, lw);
       });
-      const maxAllowed = W * 0.90;
+      // Auto-fit keeps the headline within the canvas — UNLESS the text block is
+      // allowed to bleed, in which case it keeps full size and runs off the edge.
+      const maxAllowed = h.bleed ? Infinity : W * 0.90;
       if (widest > maxAllowed) size = Math.max(size * (maxAllowed / widest), 40 * sf);
-      halfW = Math.max(halfW, Math.min(widest, maxAllowed) / 2);
+      halfW = Math.max(halfW, (h.bleed ? widest : Math.min(widest, maxAllowed)) / 2);
       lines.forEach((ln) => {
         blocks.push({ kind: 'headline', text: ln.text, size, weight, tracking, lineHeight: lh, color: ln.accent ? accentColor : baseColor, font: fonts.display, y, h: size * lh });
         y += size * lh;
@@ -750,7 +786,7 @@ window.Renderer = (() => {
     if (prev && prev.phones) {
       const pt = prev.device || 'iphone';
       for (const p of prev.phones) {
-        if (p.show === false) continue;
+        if (p.show === false || p.bleed === false) continue;
         const e = phoneEdges(p);
         if (e && e.right > 1.0) out.push({ phone: p, frameType: pt, x: (p.x != null ? p.x : 50) - 100, z: p.z || 0, order: 0 });
       }
@@ -758,13 +794,40 @@ window.Renderer = (() => {
     if (next && next.phones) {
       const nt = next.device || 'iphone';
       for (const p of next.phones) {
-        if (p.show === false) continue;
+        if (p.show === false || p.bleed === false) continue;
         const e = phoneEdges(p);
         if (e && e.left < 0.0) out.push({ phone: p, frameType: nt, x: (p.x != null ? p.x : 50) + 100, z: p.z || 0, order: 2 });
       }
     }
     out.sort((a, b) => (a.z - b.z) || (a.order - b.order)); // lower layer first → higher on top
     return out;
+  }
+
+  // Header text / pills flagged "bleed" continue onto the neighbouring screen
+  // across the seam — the same continuous behaviour the phone already has — so a
+  // panorama set reads as one composition instead of being chopped at each edge.
+  function drawNeighborHeaders(ctx, W, H, opts) {
+    const draw = (s, dx) => {
+      if (!s || !s.header || s.header.show === false || !s.header.bleed) return;
+      const shifted = Object.assign({}, s, { header: Object.assign({}, s.header, { x: (s.header.x != null ? s.header.x : 0.5) + dx }) });
+      drawHeader(ctx, W, H, shifted);
+    };
+    draw(opts.prev, -1);
+    draw(opts.next, 1);
+  }
+
+  function drawNeighborPills(ctx, W, H, opts, fallbackFonts, accent) {
+    const draw = (s, dx) => {
+      if (!s || !s.pills) return;
+      const fonts = s.fonts || fallbackFonts || {};
+      for (const pill of s.pills) {
+        if (!pill || !pill.bleed) continue;
+        const shifted = Object.assign({}, pill, { x: (pill.x != null ? pill.x : 0.5) + dx, id: null });
+        drawPill(ctx, shifted, W, H, fonts, { accent });
+      }
+    };
+    draw(opts.prev, -1);
+    draw(opts.next, 1);
   }
 
   // ── Main render ──────────────────────────────────────────────────────────────
@@ -777,6 +840,7 @@ window.Renderer = (() => {
     else drawBackground(ctx, W, H, state.background, state.theme);
 
     if (state.header && state.header.show !== false) drawHeader(ctx, W, H, state);
+    drawNeighborHeaders(ctx, W, H, opts);
 
     // Every phone that lands on this canvas — this screen's own phone(s) plus
     // continuations of neighbours whose phone bleeds across the seam — drawn
@@ -786,6 +850,7 @@ window.Renderer = (() => {
     const fonts = state.fonts || {};
     const selectedId = opts.selectedPillId;
     const accent = (state.theme && state.theme.accent) || '#7C3AED';
+    drawNeighborPills(ctx, W, H, opts, fonts, accent);
     for (const pill of (state.pills || [])) {
       drawPill(ctx, pill, W, H, fonts, { selected: pill.id === selectedId, accent });
     }
@@ -797,10 +862,12 @@ window.Renderer = (() => {
       ctx.save();
       ctx.strokeStyle = accent;
       ctx.globalAlpha = 0.9;
-      ctx.lineWidth = 2 * (W / DESIGN_W);
+      const lw = 2 * (W / DESIGN_W);
+      ctx.lineWidth = lw;
       ctx.setLineDash([12 * (W / DESIGN_W), 9 * (W / DESIGN_W)]);
-      if (g.vx != null) { ctx.beginPath(); ctx.moveTo(g.vx * W, 0); ctx.lineTo(g.vx * W, H); ctx.stroke(); }
-      if (g.hy != null) { ctx.beginPath(); ctx.moveTo(0, g.hy * H); ctx.lineTo(W, g.hy * H); ctx.stroke(); }
+      // Inset so a seam guide sitting exactly on an edge (vx=0 or 1) stays visible.
+      if (g.vx != null) { const gx = Math.min(W - lw, Math.max(lw, g.vx * W)); ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
+      if (g.hy != null) { const gy = Math.min(H - lw, Math.max(lw, g.hy * H)); ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
       ctx.restore();
     }
   }

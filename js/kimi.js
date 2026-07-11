@@ -120,10 +120,12 @@ window.Kimi = (() => {
   // ── Task: copy (eyebrow + two-tone headline + subtitle) ───────────────────
   async function copy({ screenNote = '', angle = '', image = null } = {}) {
     const sys = brandSystem(
-      'You write the text block for one screenshot: a one-word uppercase EYEBROW label (e.g. TODAY, GOALS, PRIVACY), ' +
-      'a two-line HEADLINE, and a one-line SUBTITLE. The headline is split into 2 lines; the second ' +
-      'line is the "accent" line (shown in the brand colour). Headline lines are short and bold. ' +
-      'Subtitle is one calm sentence (max ~12 words).'
+      'You are a senior App Store / ASO marketing copywriter. Write the text block for ONE screenshot that stops the scroll and earns the download. ' +
+      'Think strategically: what is the single most compelling benefit THIS screen should sell, and what outcome does it give the user? ' +
+      'Lead with that benefit/feeling — not a description of the UI. The headline is a punchy hook with a clear payoff; the accent (2nd) line carries the emotional punch. ' +
+      'Use the brand blueprint for voice, positioning and which benefit fits this screen. ' +
+      'Output: a one-word uppercase EYEBROW (the theme, e.g. TODAY, GOALS, PRIVACY), a two-line HEADLINE (line 2 = accent line), and a one-line SUBTITLE that adds concrete clarity (max ~12 words). ' +
+      'Keep Spendaily’s calm, encouraging voice — confident, plain, no hype, no jargon.'
     );
     const user = [
       `Screen: ${screenNote || 'app home screen'}.`,

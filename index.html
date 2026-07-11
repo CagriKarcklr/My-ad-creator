@@ -44,6 +44,7 @@
         </div>
       </div>
       <div class="topbar-right">
+        <button class="btn ghost" id="btn-layouts" title="Mockup position presets">▥ Layouts</button>
         <button class="btn ghost" id="btn-all-screens" title="Show all screens side-by-side while editing">▦ All screens</button>
         <button class="btn ghost" id="btn-theme" title="Toggle light / dark interface">☀️</button>
         <button class="btn ghost" id="btn-add-screen" title="Add screen">+ Screen</button>
@@ -149,6 +150,7 @@
               <button class="btn ghost sm grow" id="textset-shuffle">🎲 Surprise me</button>
               <button class="btn ghost sm grow" id="textset-save">＋ Save current</button>
             </div>
+            <button class="btn ai-btn" id="ai-textset" style="width:100%;margin-top:8px">✨ Write a strategic text set<small>reads your screenshot + blueprint → marketing copy that converts</small></button>
             <hr class="div">
 
             <label class="field-label">Eyebrow</label>
@@ -163,7 +165,7 @@
 
             <div class="row" style="margin-top:12px">
               <label class="field-label" style="flex:1">Headline size
-                <input type="range" id="headline-size" min="60" max="160" value="116">
+                <input type="range" id="headline-size" min="60" max="240" value="116">
               </label>
               <label class="field-label" style="flex:1">Weight
                 <select id="headline-weight" class="input">
@@ -188,9 +190,18 @@
             <label class="field-label">Subtitle</label>
             <textarea id="subtitle-text" class="input" rows="2" placeholder="One calm number every morning."></textarea>
 
-            <label class="field-label">Vertical position</label>
+            <label class="field-label">Horizontal position <input type="number" id="v-header-x" class="num-mini" min="-80" max="180" value="50">%</label>
+            <div class="row">
+              <input type="range" id="header-x" min="-20" max="120" value="50" style="flex:1">
+              <button class="btn ghost sm" id="header-centre-x" title="Centre the text horizontally">Centre</button>
+            </div>
+            <label class="field-label">Vertical position <input type="number" id="v-header-y" class="num-mini" min="-50" max="150" value="5">%</label>
             <input type="range" id="header-y" min="0" max="92" value="5">
-            <p class="muted tiny">Drag the text on the canvas to place it anywhere.</p>
+            <div class="row" style="margin-top:8px">
+              <button class="btn ghost sm grow" id="header-copy-pos" title="Copy this text block's position">⧉ Copy position</button>
+              <button class="btn ghost sm grow" id="header-paste-pos" title="Apply the copied position">⤵ Paste</button>
+            </div>
+            <p class="muted tiny">Or drag the text on the canvas — it snaps to the centre lines.</p>
 
             <label class="row between" style="margin-top:8px">
               <span class="field-label" style="margin:0">Text can bleed off edges</span>
@@ -270,12 +281,17 @@
               <div class="pano-presets" id="pano-presets"></div>
               <label class="field-label">Full preview (all screens)</label>
               <div id="pano-preview" class="pano-preview"></div>
-              <label class="field-label">Colours · left → right flow</label>
+
+              <label class="field-label">Hue shift <i id="v-pano-hue">0°</i></label>
+              <input type="range" id="pano-hue" min="-180" max="180" value="0">
+              <label class="field-label">Tone · light ↔ deep <i id="v-pano-tone">0</i></label>
+              <input type="range" id="pano-tone" min="-30" max="30" value="0">
+              <label class="field-label">Vibrancy <i id="v-pano-vib">100%</i></label>
+              <input type="range" id="pano-vibrancy" min="0" max="200" value="100">
+
+              <label class="field-label">Per-screen colours <span class="muted">· each blends into the next</span></label>
               <div id="pano-stops" class="grad-stops"></div>
-              <div class="row" style="margin-top:8px">
-                <button class="btn ghost sm grow" id="pano-add">+ Colour</button>
-                <button class="btn ghost sm grow" id="pano-save">＋ Save to library</button>
-              </div>
+              <button class="btn ghost sm" id="pano-save" style="width:100%;margin-top:8px">＋ Save to library</button>
             </div>
           </section>
 
@@ -311,16 +327,24 @@
               <span class="field-label" style="margin:0">Show selected mockup</span>
               <label class="switch sm"><input type="checkbox" id="phone-show" checked><span></span></label>
             </label>
-            <p class="muted tiny">Turn off (or remove with ×) to drop a mockup — handy when a neighbour's bleeding phone already fills the image. Each mockup has its own screenshot.</p>
+            <label class="row between" style="margin-top:8px">
+              <span class="field-label" style="margin:0">Bleed onto neighbouring screen</span>
+              <label class="switch sm"><input type="checkbox" id="phone-bleed" checked><span></span></label>
+            </label>
+            <p class="muted tiny">Turn off (or remove with ×) to drop a mockup — handy when a neighbour's bleeding phone already fills the image. Turn off <b>bleed</b> to keep this mockup fully inside its own screen (it won't continue onto the next). Each mockup has its own screenshot.</p>
 
-            <label class="field-label">Scale <i id="v-scale">55%</i></label>
+            <label class="field-label">Scale <input type="number" id="v-scale" class="num-mini" min="20" max="220" value="55">%</label>
             <input type="range" id="phone-scale" min="25" max="160" value="55">
-            <label class="field-label">Horizontal <i id="v-x">50%</i></label>
+            <label class="field-label">Horizontal <input type="number" id="v-x" class="num-mini" min="-120" max="220" value="50">%</label>
             <input type="range" id="phone-x" min="-60" max="160" value="50">
-            <label class="field-label">Vertical <i id="v-y">62%</i></label>
+            <label class="field-label">Vertical <input type="number" id="v-y" class="num-mini" min="-30" max="140" value="62">%</label>
             <input type="range" id="phone-y" min="20" max="100" value="62">
-            <label class="field-label">Rotation <i id="v-rot">0°</i></label>
+            <label class="field-label">Rotation <input type="number" id="v-rot" class="num-mini" min="-45" max="45" value="0">°</label>
             <input type="range" id="phone-rotation" min="-35" max="35" value="0">
+            <div class="row" style="margin-top:8px">
+              <button class="btn ghost sm grow" id="phone-copy-pos" title="Copy this mockup's position">⧉ Copy position</button>
+              <button class="btn ghost sm grow" id="phone-paste-pos" title="Apply the copied position">⤵ Paste</button>
+            </div>
             <label class="field-label">Layer <i id="v-z">0</i> <span class="muted" style="float:none;font-weight:400">— which phone sits on top where they overlap</span></label>
             <div class="bleed-presets">
               <button class="btn ghost sm" id="phone-back">↓ Send back</button>
@@ -374,10 +398,24 @@
       <div class="modal-head"><h3>Drafts</h3><button id="drafts-close" class="modal-x">×</button></div>
       <div class="modal-body">
         <button class="btn primary" id="btn-save-draft" style="width:100%">＋ Save current as a new draft</button>
+        <div class="row" style="margin-top:8px">
+          <button class="btn ghost grow" id="btn-export-json" title="Download the whole project as a .json file you can keep">⤓ Back up to file (.json)</button>
+          <button class="btn ghost grow" id="btn-import-json" title="Load a project from a .json backup file">⤒ Import from file</button>
+        </div>
+        <input type="file" id="import-json-input" accept="application/json,.json" hidden>
+        <p class="muted tiny" style="margin-top:6px">A file backup never gets lost if the browser clears its storage. If a session won't restore, open <b>/recover.html</b>.</p>
         <div id="drafts-list" class="drafts-list"></div>
         <hr class="div">
         <button class="btn ghost" id="btn-reset" style="width:100%" title="Discard current work, back to starter screens">Reset to starter screens</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Mockup-position presets -->
+  <div id="layouts-overlay" class="modal-overlay hidden">
+    <div class="modal modal-wide">
+      <div class="modal-head"><h3>Mockup layouts <span class="muted tiny" style="font-weight:400">· applies to all screens</span></h3><button id="layouts-close" class="modal-x">×</button></div>
+      <div class="modal-body"><div id="layouts-grid"></div></div>
     </div>
   </div>
 
